@@ -29,6 +29,9 @@ RUN pip install --no-cache-dir \
     --only-binary=:all: \
     dlib-bin==20.0.1
 
+RUN pip install --no-cache-dir \
+    face-recognition-models==0.3.0
+
 # face-recognition is deliberately installed without dependencies
 # because dlib-bin already provides the dlib Python module.
 RUN pip install --no-cache-dir \
