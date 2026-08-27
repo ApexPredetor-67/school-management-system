@@ -93,6 +93,14 @@ def csv_values(name):
 def client_ip():
     return request.remote_addr or 'unknown'
 
+
+def _request_cache():
+    cache = getattr(g, "_request_cache", None)
+    if cache is None:
+        cache = {}
+        g._request_cache = cache
+    return cache
+
 def ip_allowed(name):
     allowed = csv_values(name)
     if not allowed: return True
