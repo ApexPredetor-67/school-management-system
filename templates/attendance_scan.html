@@ -1,0 +1,52 @@
+{% extends 'base.html' %}
+{% block title %}Attendance Scanner{% endblock %}
+{% block header %}Attendance Scanner{% endblock %}
+{% block content %}
+<div class="page-head"><div><h1>Attendance Scanner</h1><p>Seven-frame face verification with a live marklist.</p></div><div class="actions"><span id="dayBadge" class="badge badge-yellow">Checking…</span><span id="clockBadge" class="badge badge-gray">--:--:--</span></div></div>
+<div class="grid grid2" style="align-items:start">
+  <div class="card scanner-card">
+    <div class="camera-stage" style="aspect-ratio:4/3"><video id="video" autoplay playsinline muted></video><div id="cameraState" class="camera-state">Starting camera…</div></div>
+    <div class="actions" style="margin-top:14px"><button id="scan" class="btn btn-success" style="flex:1;min-height:52px;font-size:16px" disabled>◉ Scan & Mark Attendance</button></div>
+    <div id="message" class="scanner-msg" aria-live="polite"></div>
+    <div class="tiny muted" style="margin-top:10px">One student at a time • 7 verification frames • duplicate-safe</div>
+  </div>
+  <div class="card">
+    <div class="section-title"><h2>Today's Marklist</h2><button id="refresh" class="btn btn-light btn-compact">Refresh</button></div>
+    <div class="grid grid4" style="margin-top:10px">
+      <div class="stat"><div class="stat-value" id="countPresent">0</div><div class="tiny muted">Present</div></div>
+      <div class="stat"><div class="stat-value" id="countLate">0</div><div class="tiny muted">Late</div></div>
+      <div class="stat"><div class="stat-value" id="countAbsent">0</div><div class="tiny muted">Absent</div></div>
+      <div class="stat"><div class="stat-value" id="countNot">0</div><div class="tiny muted">Not Marked</div></div>
+    </div>
+    <div class="field" style="margin-top:12px"><label>Search marklist</label><input id="filter" placeholder="Name / admission no. / class / roll" autocomplete="off"></div>
+    <div class="table-wrap" style="max-height:520px;overflow:auto"><table><thead><tr><th>Student</th><th>Class</th><th>Roll</th><th>Status</th><th>Time</th></tr></thead><tbody id="markRows"><tr><td colspan="5" class="empty">Loading…</td></tr></tbody></table></div>
+  </div>
+</div>
+<style>
+.scanner-msg{margin-top:12px;padding:10px 12px;border-radius:10px;min-height:20px}.scanner-msg.ok{background:#eaf8f0;color:#11673c}.scanner-msg.late{background:#fff7d8;color:#6f5600}.scanner-msg.err{background:#fdeceb;color:#8c1f17}.scanner-msg.info{background:#eef5ff;color:#235b99}
+.stat{padding:10px;border:1px solid #e8edf3;border-radius:10px;text-align:center}.stat-value{font-size:22px;font-weight:800}
+.status-present{color:#157347;font-weight:800}.status-late{color:#9a6700;font-weight:800}.status-absent{color:#b42318;font-weight:800}.status-not_marked{color:#667085;font-weight:700}
+</style>
+<script>
+(() => {
+  let stream=null, scanning=false, rows=[];
+  const video=document.getElementById('video'), btn=document.getElementById('scan'), msg=document.getElementById('message'), day=document.getElementById('dayBadge'), clock=document.getElementById('clockBadge');
+  const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+  const show=(text,kind='info')=>{msg.className='scanner-msg '+kind;msg.textContent=text};
+  async function read(url,opts){const r=await ((opts&&opts.method&&opts.method.toUpperCase()!=='GET')?(window.csrfFetch||fetch):fetch)(url,opts);const ct=r.headers.get('content-type')||'';const d=ct.includes('application/json')?await r.json().catch(()=>({})):{};return {r,d}}
+  async function checkDay(){
+    const {r,d}=await read('/api/school-day');
+    if(!r.ok){day.className='badge badge-red';day.textContent='Calendar error';btn.disabled=true;show(d.error||'School day could not be checked.','err');return}
+    day.className=d.is_working?'badge badge-green':'badge badge-gray';day.textContent=d.is_working?'Working day':'Non-working day';clock.textContent=d.time||'--:--:--';
+    btn.disabled=!d.is_working||!stream||!video.videoWidth;
+    if(!d.is_working) show('Today is a non-working school day.','info');
+  }
+  function frame(){if(!video.videoWidth)throw new Error('Camera is not ready.');const c=document.createElement('canvas');c.width=video.videoWidth;c.height=video.videoHeight;c.getContext('2d').drawImage(video,0,0);return c.toDataURL('image/jpeg',.94)}
+  async function loadMarklist(){const {r,d}=await read('/api/attendance/marklist');if(!r.ok){document.getElementById('markRows').innerHTML='<tr><td colspan="5" class="empty">Could not load marklist.</td></tr>';return} rows=d.rows||[]; for(const [id,val] of [['countPresent',d.counts?.present||0],['countLate',d.counts?.late||0],['countAbsent',d.counts?.absent||0],['countNot',d.counts?.not_marked||0]]) document.getElementById(id).textContent=val; renderRows();}
+  function renderRows(){const q=document.getElementById('filter').value.trim().toLowerCase();const filtered=rows.filter(x=>[x.name,x.admission_number,x.class_name,x.section,x.roll_number].join(' ').toLowerCase().includes(q));document.getElementById('markRows').innerHTML=filtered.map(x=>`<tr><td><strong>${x.name}</strong><div class="tiny muted">${x.admission_number}</div></td><td>${x.class_name}${x.section?'-'+x.section:''}</td><td>${x.roll_number||'—'}</td><td class="status-${x.status}">${x.status.replace('_',' ')}</td><td>${x.time_in||'—'}</td></tr>`).join('')||'<tr><td colspan="5" class="empty">No students found.</td></tr>'}
+  async function start(){try{stream=await navigator.mediaDevices.getUserMedia({video:{width:{ideal:640},height:{ideal:480},facingMode:'user'},audio:false});video.srcObject=stream;await video.play();document.getElementById('cameraState').textContent='Camera ready';document.getElementById('cameraState').className='camera-state ready';await checkDay();await loadMarklist();}catch(e){document.getElementById('cameraState').textContent='Camera unavailable';document.getElementById('cameraState').className='camera-state error';show('Camera access is required: '+e.message,'err');}}
+  async function scan(){if(scanning||!stream)return;scanning=true;btn.disabled=true;show('Collecting 7 verification frames…','info');const images=[];try{for(let i=0;i<7;i++){images.push(frame());await sleep(160)}const token=window.getCsrfToken?window.getCsrfToken():document.querySelector('meta[name="csrf-token"]')?.content;const headers={'Content-Type':'application/json'};if(token)headers['X-CSRF-Token']=token;const {r,d}=await read('/api/attendance/scan',{method:'POST',headers,body:JSON.stringify({images})});if(r.ok){const kind=d.attendance_status==='late'?'late':'ok';show(d.message+(d.already_marked?'':' Verified '+(d.votes||0)+'/'+(d.frames_used||7)+' frames.'),kind);await loadMarklist()}else show(d.error||'Recognition failed.','err');}catch(e){show(e.message||'Scanner error.','err')}finally{scanning=false;await checkDay()}}
+  btn.addEventListener('click',scan);document.getElementById('refresh').addEventListener('click',loadMarklist);document.getElementById('filter').addEventListener('input',renderRows);start();window.addEventListener('beforeunload',()=>stream?.getTracks().forEach(t=>t.stop()));
+})();
+</script>
+{% endblock %}

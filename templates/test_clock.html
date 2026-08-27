@@ -1,0 +1,24 @@
+{% extends 'base.html' %}
+{% block title %}Test Time Clock{% endblock %}
+{% block header %}Test Time Clock{% endblock %}
+{% block content %}
+<div class="hero-row">
+  <div class="hero"><div class="eyebrow">Admin testing tool</div><h1>Test Time Clock</h1><p>Change the school time without changing the computer's real clock. Attendance and student registers use this value.</p></div>
+</div>
+<div class="grid grid2" style="margin-top:18px">
+  <div class="card">
+    <h2>Current school time</h2>
+    <div style="font-size:42px;font-weight:800;margin:18px 0 6px">{{ school_time.strftime('%I:%M:%S %p') }}</div>
+    <div class="muted">Attendance status at this time: <strong>{{ status|title }}</strong></div>
+    {% if clock.override_time %}<div class="notice small" style="margin-top:16px">Test override active: <strong>{{ clock.override_time }}</strong></div>{% else %}<div class="notice small" style="margin-top:16px">Using real school time from {{ config.get('APP_TIMEZONE','Asia/Kolkata') }}.</div>{% endif %}
+  </div>
+  <div class="card">
+    <h2>Set test time</h2>
+    <form method="post" style="margin-top:16px">
+      <div class="field"><label>School time (24-hour)</label><input name="override_time" value="{{ clock.override_time or '' }}" placeholder="08:45" pattern="^([01]\d|2[0-3]):[0-5]\d$" required></div>
+      <div class="actions" style="margin-top:14px"><button class="btn btn-primary" name="action" value="save">Set Test Time</button><button class="btn btn-light" name="action" value="clear">Use Real Time</button></div>
+    </form>
+    <div class="small muted" style="margin-top:18px">Examples: 08:00 → Present · 08:45 → Late · 09:05 → Absent.</div>
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>DAV PS KKP</title>
+<link rel="icon" href="{{ url_for('static',filename='branding/dav-ps-kkp-logo.png') }}">
+<link rel="stylesheet" href="{{ url_for('static',filename='app.css') }}">
+</head>
+<body>
+<div class="login">
+  <div class="login-card">
+    <div class="brand" style="padding:0 0 14px;color:#15365a;font-size:22px;display:flex;align-items:center;gap:12px">
+      <img src="{{ url_for('static',filename='branding/dav-ps-kkp-logo.png') }}" alt="DAV PS KKP" style="width:54px;height:54px;object-fit:contain;border-radius:10px;background:#fff">
+      <div>
+        <strong style="display:block">DAV PS KKP</strong>
+        <small style="display:block;font-size:11px;color:#758195;margin-top:3px">School Management System</small>
+      </div>
+    </div>
+    <div class="hero"><h2>One school system. Less manual work.</h2><p class="muted">Attendance, academics, results, report cards and role-aware announcements in one place.</p></div>
+    <div class="actions" style="margin-top:18px">
+      <a class="btn btn-primary" href="{{ url_for('login') }}">Sign in</a>
+      <a class="btn btn-light" href="/announcements">📢 Announcements</a>
+    </div>
+  </div>
+</div>
+</body>
+</html>

@@ -1,0 +1,60 @@
+{% extends 'base.html' %}
+{% block title %}School Calendar{% endblock %}
+{% block header %}School Calendar{% endblock %}
+{% block content %}
+<div class="hero-row">
+  <div class="hero"><div class="eyebrow">School planning</div><h1>School Calendar</h1><p>{% if calendar_readonly %}View working days, holidays and attendance-impacting dates.{% else %}Set working days, holidays and import the school calendar.{% endif %}</p></div>
+  {% if not calendar_readonly %}<div class="actions no-print"><button class="btn btn-light" id="todayBtn">Today</button><button class="btn btn-primary" id="importBtn">Import Calendar</button></div>{% endif %}
+</div>
+
+<div class="card calendar-card" style="margin-top:18px">
+  <div class="calendar-toolbar">
+    <div class="actions"><button class="btn btn-light btn-compact" id="prevBtn">←</button><button class="btn btn-light btn-compact" id="nextBtn">→</button><h2 id="monthTitle" style="margin:0 6px"></h2></div>
+    <div class="legend"><span><i class="dot working"></i> Working</span><span><i class="dot off"></i> Non-working</span><span><i class="dot override"></i> Override</span></div>
+  </div>
+  <div class="calendar-head"><span>Mon</span><span>Tue</span><span>Wed</span><span>Thu</span><span>Fri</span><span>Sat</span><span>Sun</span></div>
+  <div id="calendarGrid" class="calendar-grid"></div>
+</div>
+
+{% if not calendar_readonly %}
+<div class="card no-print" style="margin-top:18px">
+  <div class="statline"><div><h2>Edit a day</h2><div class="small muted">Click a date above, then save its status and reason.</div></div><span id="editDate" class="pill">No date selected</span></div>
+  <div class="grid grid3" style="margin-top:14px">
+    <div class="field"><label>Status</label><select id="dayStatus"><option value="1">Working day</option><option value="0">Non-working / holiday</option></select></div>
+    <div class="field"><label>Reason</label><input id="dayReason" placeholder="Holiday, special working day, exam…"></div>
+    <div class="actions" style="align-self:end"><button class="btn btn-primary" id="saveDay">Save</button><button class="btn btn-light" id="resetDay">Reset to weekly default</button></div>
+  </div>
+</div>
+
+<div class="card no-print" id="importCard" style="display:none;margin-top:18px">
+  <div class="statline"><div><h2>Import school calendar</h2><div class="small muted">Upload a PDF/image or paste text. Review detected dates before applying.</div></div><button class="btn btn-light btn-compact" id="closeImport">Close</button></div>
+  <div class="grid grid2" style="margin-top:14px">
+    <div class="field"><label>PDF / image</label><input type="file" id="calendarFile" accept=".pdf,.png,.jpg,.jpeg,.webp"></div>
+    <div class="field"><label>Optional text</label><textarea id="calendarText" rows="4" placeholder="Paste dates from the school calendar…"></textarea></div>
+  </div>
+  <div class="actions" style="margin-top:12px"><button class="btn btn-primary" id="detectBtn">Detect dates</button></div>
+  <div id="importPreview" style="margin-top:12px"></div>
+</div>
+{% endif %}
+
+<script>
+const readonly={{ 'true' if calendar_readonly else 'false' }};
+let cursor=new Date(); let selected=null; let detected=[];
+const $=id=>document.getElementById(id);
+function ym(d){return {year:d.getFullYear(),month:d.getMonth()+1}}
+function title(d){$('monthTitle').textContent=d.toLocaleString(undefined,{month:'long',year:'numeric'})}
+async function loadCalendar(){const {year,month}=ym(cursor); const r=await fetch(`/api/calendar?year=${year}&month=${month}`); const rows=await r.json(); if(!r.ok)return; title(cursor); const grid=$('calendarGrid'); grid.innerHTML=''; const first=new Date(year,month-1,1); let mondayIndex=(first.getDay()+6)%7; for(let i=0;i<mondayIndex;i++){const b=document.createElement('button'); b.className='cal-day blank'; b.disabled=true; grid.appendChild(b)} for(const row of rows){const d=new Date(row.date+'T00:00:00'); const b=document.createElement('button'); b.className='cal-day '+(row.is_working?'working':'off')+(row.override?' has-override':'')+(d.toDateString()===new Date().toDateString()?' today':''); b.innerHTML=`<div class="cal-num">${d.getDate()}</div><small>${row.is_working?'Working day':'Holiday / non-working'}${row.reason?`<br>${escapeHtml(row.reason)}`:''}</small>${row.override?'<div class="override-label">Override</div>':''}`; b.onclick=()=>selectDay(row); grid.appendChild(b)} }
+function escapeHtml(s){return String(s).replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]))}
+function selectDay(row){selected=row; if(!readonly){$('editDate').textContent=row.date;$('dayStatus').value=row.is_working?'1':'0';$('dayReason').value=row.reason||''}}
+$('prevBtn').onclick=()=>{cursor=new Date(cursor.getFullYear(),cursor.getMonth()-1,1);loadCalendar()};
+$('nextBtn').onclick=()=>{cursor=new Date(cursor.getFullYear(),cursor.getMonth()+1,1);loadCalendar()};
+{% if not calendar_readonly %}
+$('todayBtn').onclick=()=>{cursor=new Date();loadCalendar()};
+$('saveDay').onclick=async()=>{if(!selected)return alert('Select a date first.'); const r=await (window.csrfFetch||fetch)('/api/calendar',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({date:selected.date,is_working:$('dayStatus').value==='1',reason:$('dayReason').value})}); const d=await r.json(); if(!r.ok)return alert(d.error||'Could not save.'); await loadCalendar()};
+$('resetDay').onclick=async()=>{if(!selected)return alert('Select a date first.'); const r=await (window.csrfFetch||fetch)('/api/calendar/reset',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({date:selected.date})}); if(!r.ok)return alert('Could not reset.'); await loadCalendar(); selectDay({date:selected.date,is_working:(await (await fetch(`/api/calendar?year=${cursor.getFullYear()}&month=${cursor.getMonth()+1}`)).json()).find(x=>x.date===selected.date)?.is_working??true,reason:''})};
+$('importBtn').onclick=()=>{$('importCard').style.display='block'};$('closeImport').onclick=()=>{$('importCard').style.display='none'};
+$('detectBtn').onclick=async()=>{const fd=new FormData(); const f=$('calendarFile').files[0]; if(f)fd.append('calendar_file',f); fd.append('calendar_text',$('calendarText').value); const r=await (window.csrfFetch||fetch)('/api/calendar/import',{method:'POST',body:fd}); const d=await r.json(); if(!r.ok)return alert(d.error||'Import failed.'); detected=d.dates||[]; $('importPreview').innerHTML=`<div class="alert info">Detected ${detected.length} date(s): ${d.working_count} working, ${d.non_working_count} non-working.</div><div class="table-wrap"><table><tr><th>Date</th><th>Status</th><th>Reason</th></tr>${detected.slice(0,100).map(x=>`<tr><td>${x.date}</td><td>${x.is_working?'Working':'Non-working'}</td><td>${escapeHtml(x.reason||'')}</td></tr>`).join('')}</table></div><button class="btn btn-primary" style="margin-top:12px" id="applyImport">Apply detected dates</button>`; $('applyImport').onclick=async()=>{const rr=await (window.csrfFetch||fetch)('/api/calendar/import/apply',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({dates:detected})});const dd=await rr.json();if(!rr.ok)return alert(dd.error||'Could not apply.');alert(dd.message);await loadCalendar()};};
+{% endif %}
+loadCalendar();
+</script>
+{% endblock %}

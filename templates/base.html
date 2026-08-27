@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{% block title %}DAV PS KKP{% endblock %}</title>
+<link rel="icon" href="{{ url_for('static',filename='branding/dav-ps-kkp-logo.png') }}">
+<link rel="stylesheet" href="{{ url_for('static',filename='app.css') }}">
+<meta name="csrf-token" content="{{ csrf_token }}">
+<script>
+window.getCsrfToken=()=>document.querySelector('meta[name="csrf-token"]')?.content||'';
+window.refreshCsrfToken=async function(force=false){try{const r=await fetch('/api/csrf'+(force?'?refresh=1':''),{cache:'no-store',credentials:'same-origin'});if(r.ok){const d=await r.json();if(d.csrf_token){document.querySelector('meta[name="csrf-token"]').content=d.csrf_token;document.querySelectorAll('input[name="_csrf"]').forEach(i=>i.value=d.csrf_token);return d.csrf_token;}}}catch(e){}return window.getCsrfToken()};
+window.csrfFetch=async function(input,init={}){init={...init};const method=(init.method||'GET').toUpperCase();if(method!=='GET'){const h=new Headers(init.headers||{});h.set('X-CSRF-Token',window.getCsrfToken());init.headers=h;init.credentials=init.credentials||'same-origin';}let r=await fetch(input,init);if(method!=='GET'&&r.status===400&&!init.__csrfRetry){try{const d=await r.clone().json();if(d&&/csrf/i.test(d.error||'')){await window.refreshCsrfToken(true);init.__csrfRetry=true;r=await fetch(input,{...init,headers:{...(init.headers||{}),'X-CSRF-Token':window.getCsrfToken()}});}}catch(e){}}return r};
+</script>
+</head>
+<body>
+<div class="layout">
+  <aside class="side">
+    <div class="brand">
+      <img class="brand-mark" src="{{ url_for('static',filename='branding/dav-ps-kkp-logo.png') }}" alt="DAV PS KKP">
+      <div><div class="brand-school">DAV PS KKP</div><span class="brand-sub">School Management</span></div>
+    </div>
+
+    <div class="nav-title">School</div>
+    <nav class="nav">
+      <a class="{{ 'active' if request.endpoint=='dashboard' else '' }}" href="{{ url_for('dashboard') }}">⌂ <span>Dashboard</span></a>
+      <a class="{{ 'active' if request.endpoint in ['announcements_view','announcements','publish_announcement'] else '' }}" href="/announcements">📢 <span>Announcements</span></a>
+      <a class="{{ 'active' if request.endpoint in ['admin_calendar_page','teacher_calendar_page','calendar_view_redirect'] else '' }}" href="{{ url_for('calendar_view_redirect') }}">▦ <span>School Calendar</span></a>
+      {% if session.get('role') in ['student','parent'] %}
+        <a href="{{ url_for('my_attendance') }}">✓ <span>Attendance</span></a>
+        <a href="{{ url_for('my_results') }}">▤ <span>Results</span></a>
+      {% endif %}
+    </nav>
+
+    {% if session.get('role')=='teacher' %}
+    <div class="nav-title">Teacher</div>
+    <nav class="nav">
+      <a href="{{ url_for('attendance_page') }}">◷ <span>Attendance Register</span></a>
+      <a href="{{ url_for('academics') }}">▣ <span>Academics</span></a>
+      <a href="{{ url_for('results') }}">▤ <span>Results & Analysis</span></a>
+      <a href="{{ url_for('teacher_signature') }}">✍ <span>My Signature</span></a>
+    </nav>
+    {% endif %}
+
+    {% if session.get('role')=='admin' %}
+    <div class="nav-title">Administration</div>
+    <nav class="nav">
+      <a href="{{ url_for('admin_register_page') }}">＋ <span>Register Student</span></a><a href="{{ url_for('admin_students') }}">♙ <span>Students</span></a>
+      <a href="{{ url_for('admin_teachers') }}">♟ <span>Teachers</span></a>
+      <a href="{{ url_for('admin_accounts') }}">@ <span>People & Accounts</span></a>
+      <a href="{{ url_for('announcements') }}">📢 <span>Manage Announcements</span></a>
+      <a href="{{ url_for('assignments') }}">☷ <span>Assignments</span></a>
+      <a href="{{ url_for('test_clock') }}">◷ <span>Test Time Clock</span></a>
+    </nav>
+    {% endif %}
+
+    <div class="nav-title">You</div>
+    <nav class="nav">
+      <a href="{{ url_for('change_credentials') }}">⚙ <span>Account & Security</span></a>
+      <a href="{{ url_for('logout') }}">↪ <span>Sign out</span></a>
+    </nav>
+    <div class="footer-note">DAV PS KKP • Secure school management</div>
+  </aside>
+  <div class="mobile-nav-overlay" onclick="closeMobileNav()"></div>
+
+  <main class="main">
+    <header class="top">
+      <div class="top-left"><button class="mobile-nav-btn" type="button" aria-label="Open menu" aria-expanded="false" onclick="toggleMobileNav(this)">☰</button><strong>{% block header %}School Management{% endblock %}</strong><div class="crumb">Academic session {{ config.get('ACADEMIC_SESSION','2026-27') }}</div></div>
+      <div class="top-right">
+        {% if session.get('role')=='admin' and clock_override_time %}<span class="pill pill-yellow">Test {{ clock_override_time }}</span>{% endif %}<span class="pill pill-blue">{{ session.get('role','')|title }}</span>
+        {% if current_account() and current_account().profile_picture_path %}<img class="profile-avatar" src="{{ profile_picture_url(current_account()) }}" alt="Profile picture">{% else %}<span class="profile-initials">{{ (current_account().display_name[:2] if current_account() else 'SC')|upper }}</span>{% endif %}
+        <a class="btn btn-light btn-compact" href="{{ url_for('logout') }}">Sign out</a>
+      </div>
+    </header>
+    <div class="wrap">
+      {% with msgs=get_flashed_messages(with_categories=true) %}
+        {% for c,m in msgs %}<div class="alert {{c}}">{{m}}</div>{% endfor %}
+      {% endwith %}
+      {% block content %}{% endblock %}
+    </div>
+  </main>
+</div>
+<script>
+let __csrf='{{ csrf_token }}';
+let __csrfRefreshing=null;
+const __nativeFetch=window.fetch.bind(window);
+function applyCsrfToken(token){if(!token)return;__csrf=token;const meta=document.querySelector('meta[name="csrf-token"]');if(meta)meta.content=token;document.querySelectorAll('input[name="_csrf"]').forEach(i=>i.value=token);}
+async function refreshCsrfToken(force=false){
+  if(__csrfRefreshing)return __csrfRefreshing;
+  __csrfRefreshing=(async()=>{try{const r=await __nativeFetch('/api/csrf'+(force?'?refresh=1':''),{cache:'no-store',credentials:'same-origin'});if(r.ok){const d=await r.json();applyCsrfToken(d.csrf_token);return d.csrf_token;}}catch(e){}finally{__csrfRefreshing=null}return __csrf})();
+  return __csrfRefreshing;
+}
+window.getCsrfToken=()=>__csrf;
+document.addEventListener('submit',e=>{const f=e.target;if(!(f instanceof HTMLFormElement))return;if((f.method||'get').toLowerCase()!=='post')return;let i=f.querySelector('input[name=_csrf]');if(!i){i=document.createElement('input');i.type='hidden';i.name='_csrf';f.appendChild(i)}i.value=__csrf;});
+window.fetch=async function(input,init){
+  init={...(init||{})};
+  const method=(init.method||'GET').toUpperCase();
+  if(method!=='GET' && !init._skipCsrf){const headers=new Headers(init.headers||{});if(!headers.has('X-CSRF-Token'))headers.set('X-CSRF-Token',__csrf);headers.set('X-Requested-With','XMLHttpRequest');init.headers=headers;init.credentials=init.credentials||'same-origin';}
+  let response=await __nativeFetch(input,init);
+  if(method!=='GET' && response.status===400 && !init._csrfRetried){
+    const contentType=response.headers.get('content-type')||'';
+    if(contentType.includes('application/json')){try{const d=await response.clone().json();if(d && (d.error||'').toLowerCase().includes('csrf')){await refreshCsrfToken(true);init._csrfRetried=true;const headers=new Headers(init.headers||{});headers.set('X-CSRF-Token',__csrf);init.headers=headers;response=await __nativeFetch(input,init);}}catch(e){}}
+  }
+  return response;
+};
+function eyeSvg(open){return open?'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12Z" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="12" r="2.5" fill="none" stroke="currentColor" stroke-width="2"/></svg>':'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 3l18 18" stroke="currentColor" stroke-width="2"/><path d="M2 12s3.5-6 10-6c1.7 0 3.2.4 4.5 1M22 12s-3.5 6-10 6c-1.7 0-3.2-0.4-4.5-1" fill="none" stroke="currentColor" stroke-width="2"/></svg>'}
+function attachPasswordToggles(){document.querySelectorAll('input[type=password]').forEach(input=>{if(input.dataset.noPasswordToggle==='true'||input.classList.contains('no-password-toggle')||input.dataset.showPassAttached)return;input.dataset.showPassAttached='1';const wrap=document.createElement('span');wrap.className='password-wrap';input.parentNode.insertBefore(wrap,input);wrap.appendChild(input);const b=document.createElement('button');b.type='button';b.className='password-toggle';b.innerHTML=eyeSvg(false);b.setAttribute('aria-label','Show password');b.setAttribute('title','Show password');b.addEventListener('click',()=>{const shown=input.type==='text';input.type=shown?'password':'text';b.innerHTML=eyeSvg(!shown);b.setAttribute('aria-label',shown?'Show password':'Hide password');b.setAttribute('title',shown?'Show password':'Hide password')});wrap.appendChild(b)})}
+function toggleMobileNav(btn){const side=document.querySelector('.side');const open=side.classList.toggle('mobile-open');document.body.classList.toggle('nav-open',open);btn.setAttribute('aria-expanded',open?'true':'false');}
+function closeMobileNav(){const side=document.querySelector('.side');if(side){side.classList.remove('mobile-open');document.body.classList.remove('nav-open');const btn=document.querySelector('.mobile-nav-btn');if(btn)btn.setAttribute('aria-expanded','false')}}
+document.addEventListener('DOMContentLoaded',()=>{attachPasswordToggles();document.querySelectorAll('.nav a').forEach(a=>a.addEventListener('click',closeMobileNav));refreshCsrfToken(false);setInterval(()=>refreshCsrfToken(false),5*60*1000)});
+</script>
+</body>
+</html>

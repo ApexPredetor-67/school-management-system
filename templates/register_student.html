@@ -1,0 +1,30 @@
+{% extends 'base.html' %}
+{% block title %}Register Student{% endblock %}
+{% block header %}Register Student{% endblock %}
+{% block content %}
+<div class="hero"><div class="eyebrow">Students</div><h1>Register Student</h1><p>Create the student record and secure login. Face capture is completed after the record is created.</p></div>
+<div class="card" style="margin-top:18px;max-width:900px">
+<form method="post">
+<div class="grid grid3">
+<div class="field"><label>Student name <span class="required">*</span></label><input name="name" value="{{form.get('name','')}}" required data-upper-name autocomplete="off"></div>
+<div class="field"><label>Admission No. <span class="required">*</span></label><input name="admission_number" value="{{form.get('admission_number','')}}" required></div>
+<div class="field"><label>Roll No. <span class="required">*</span></label><input name="roll_number" value="{{form.get('roll_number','')}}" required></div>
+<div class="field"><label>Class <span class="required">*</span></label><select id="className" name="class_name" required><option value="">Select class</option>{% for c in class_options %}<option value="{{c}}" {{'selected' if form.get('class_name')==c else ''}}>{{c}}</option>{% endfor %}</select></div>
+<div class="field"><label>Section <span id="sectionReq" class="required">*</span></label><input name="section" value="{{form.get('section','')}}" id="section" placeholder="A" oninput="this.value=this.value.toUpperCase().replace(/[^A-Z0-9]/g,'')"></div>
+<div class="field"><label>Student username <span class="required">*</span></label><input name="username" value="{{form.get('username','')}}" required autocomplete="username"></div>
+<div class="field"><label>Temporary password <span class="required">*</span></label><input name="password" type="password" minlength="8" required autocomplete="new-password"></div>
+<div class="field"><label>2nd Language</label><select name="second_language" id="second"><option value="">Select</option><option value="telugu">Telugu</option><option value="hindi">Hindi</option><option value="sanskrit">Sanskrit</option></select></div>
+<div class="field"><label id="thirdLabel">3rd Language</label><select name="third_language" id="third"><option value="">Select</option><option value="telugu">Telugu</option><option value="hindi">Hindi</option><option value="sanskrit">Sanskrit</option></select></div>
+</div>
+<div id="structure" class="notice small" style="margin-top:14px">Grades 5–8 use 7 subjects: English, 2nd Language, 3rd Language, Computers, Mathematics, Social Science, Science. Grades IX–X use 8 subjects: Mathematics, Chemistry, Biology, Physics, Social Science, English, 2nd Language, IT.</div>
+<div class="actions" style="margin-top:14px"><button class="btn btn-primary">Create student</button><a class="btn btn-light" href="{{url_for('admin_students')}}">Back to Students</a></div>
+</form></div>
+<script>
+const cls=document.getElementById('className'), second=document.getElementById('second'), third=document.getElementById('third'), section=document.getElementById('section');
+const thirdBase=[['','Select'],['telugu','Telugu'],['hindi','Hindi'],['sanskrit','Sanskrit']];
+function refreshThird(){const picked=second.value; const old=third.value; third.innerHTML=''; thirdBase.forEach(([v,t])=>{if(v && v===picked)return; const o=document.createElement('option'); o.value=v; o.textContent=t; third.appendChild(o)}); if([...third.options].some(o=>o.value===old)) third.value=old; }
+function refresh(){const n=cls.value; const low=['V','VI','VII','VIII'].includes(n); const hi=['IX','X'].includes(n); const senior=['XI','XII'].includes(n); section.required=!senior; document.getElementById('sectionReq').style.display=senior?'none':'inline'; second.required=true; third.required=low; document.getElementById('thirdLabel').style.display=low?'block':'none'; third.style.display=low?'block':'none'; document.getElementById('structure').textContent=low?'Grades V–VIII: English + 2nd Language + 3rd Language + Computers + Mathematics + Social Science + Science.':hi?'Grades IX–X: Mathematics + Chemistry + Biology + Physics + Social Science + English + 2nd Language + IT.':'Select a class.'; if(!low){third.value=''}; if(senior) section.value=''; refreshThird();}
+cls.addEventListener('change',refresh); second.addEventListener('change',refreshThird); refresh();
+document.querySelectorAll('[data-upper-name]').forEach(input=>input.addEventListener('input',()=>{input.value=input.value.toUpperCase().replace(/[^A-Z .\'-]/g,'')}));
+</script>
+{% endblock %}

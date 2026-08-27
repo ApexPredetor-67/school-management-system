@@ -1,0 +1,33 @@
+{% extends 'base.html' %}
+{% block title %}Teachers{% endblock %}
+{% block header %}Teachers{% endblock %}
+{% block content %}
+<div class="hero-row">
+  <div class="hero"><div class="eyebrow">Administration</div><h1>Teacher Configuration</h1><p>Class teachers only. Search and filter the list instead of loading everyone at once.</p></div>
+  <div class="actions"><a class="btn btn-primary" href="{{url_for('assignments')}}">Configure Assignments</a><a class="btn btn-light" href="{{url_for('admin_accounts',role='teacher')}}">Manage Teachers</a></div>
+</div>
+<div class="card" style="margin-top:18px"><form class="grid grid4" method="get"><div class="field"><label>Search</label><input name="q" value="{{search}}" placeholder="Name or username"></div><div class="field"><label>Class</label><input name="class_name" value="{{class_name}}" placeholder="IX"></div><div class="field"><label>Section</label><input name="section" value="{{section}}" placeholder="A"></div><div class="actions" style="align-self:end"><button class="btn btn-primary">Search</button><a class="btn btn-light" href="{{url_for('admin_teachers')}}">Reset</a></div></form></div><div class="grid grid2" style="margin-top:18px">
+  <div class="card">
+    <h2>Add teacher</h2>
+    <form method="post">
+      <div class="grid grid2">
+        <div class="field"><label>Teacher name <span class="required">*</span></label><input name="name" required maxlength="160" data-uppercase="name" autocomplete="off"></div>
+        <div class="field"><label>Username <span class="required">*</span></label><input name="username" required autocomplete="username"></div>
+        <div class="field"><label>Temporary password <span class="required">*</span></label><input name="password" type="password" minlength="8" required autocomplete="new-password"></div>
+        <div class="field"><label>Phone</label><input name="phone" inputmode="tel"></div>
+      </div>
+      <div class="notice small" style="margin-top:12px">The teacher changes their username and password at first login.</div>
+      <button class="btn btn-primary" style="margin-top:14px">Create teacher</button>
+    </form>
+  </div>
+  <div class="card">
+    <div class="statline"><h2>Teacher accounts</h2><span class="pill">{{teachers|length}} total</span></div>
+    <div class="table-wrap"><table><thead><tr><th>Teacher</th><th>Username</th><th>Assignments</th><th>Status</th></tr></thead><tbody>
+      {% for t in teachers %}<tr><td><div style="display:flex;align-items:center;gap:9px">{% if t.account and t.account.profile_picture_path %}<img class="profile-avatar" src="{{ profile_picture_url(t.account) }}" alt="">{% else %}<span class="profile-initials">{{t.name[:2]|upper}}</span>{% endif %}<div><strong>{{t.name}}</strong>{% if t.phone %}<div class="tiny muted">{{t.phone}}</div>{% endif %}</div></div></td><td>{{t.account.username if t.account else '—'}}</td><td>{{assignment_counts.get(t.id,0)}}</td><td><span class="pill pill-green">Active</span></td></tr>{% else %}<tr><td colspan="4"><div class="empty">No teachers yet.</div></td></tr>{% endfor %}
+    </tbody></table></div><div class="pager-line small">Page {{page}} · {{total}} total{% if page*per_page < total %} <a class="btn btn-light btn-compact" href="{{url_for('admin_teachers',page=page+1,q=search,class_name=class_name,section=section)}}">Next →</a>{% endif %}</div>
+  </div>
+</div>
+<script>
+document.querySelectorAll('[data-uppercase]').forEach(input=>input.addEventListener('input',()=>{input.value=input.value.toUpperCase().replace(/[^A-Z .\'-]/g,'')}));
+</script>
+{% endblock %}

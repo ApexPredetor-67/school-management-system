@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}Public Announcements{% endblock %}
+{% block crumb %}Public Announcements{% endblock %}
+{% block content %}
+<div class="page-head"><div><div class="eyebrow">DAV PS KKP</div><h1>Public Announcements</h1><p>Official school-wide notices for students, parents, staff and visitors.</p></div></div>
+{% if announcements %}
+  {% set featured = announcements[0] %}
+  <div class="card" style="margin-bottom:18px">
+    <div class="statline"><span class="pill pill-blue">Latest notice</span><span class="small muted">{{ featured.published_at.strftime('%d.%m.%Y') if featured.published_at else '' }}</span></div>
+    <h2 style="margin:10px 0 6px">{{ featured.title }}</h2>
+    <div style="white-space:pre-wrap;line-height:1.6">{{ featured.message }}</div>
+  </div>
+  <div class="grid grid2">
+    {% for a in announcements[1:] %}
+      <article class="card">
+        <div class="small muted">{{ a.published_at.strftime('%d.%m.%Y') if a.published_at else '' }}</div>
+        <h2 style="margin:7px 0 6px">{{ a.title }}</h2>
+        <div style="white-space:pre-wrap;line-height:1.55">{{ a.message }}</div>
+      </article>
+    {% endfor %}
+  </div>
+{% else %}
+  <div class="card"><div class="empty">No public announcements have been published.</div></div>
+{% endif %}
+{% endblock %}

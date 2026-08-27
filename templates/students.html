@@ -1,0 +1,42 @@
+{% extends 'base.html' %}
+{% block title %}Students{% endblock %}
+{% block header %}Students{% endblock %}
+{% block content %}
+<div class="hero-row">
+  <div class="hero"><div class="eyebrow">School</div><h1>Students</h1><p>Attendance register and student access overview.</p></div>
+  <div class="actions no-print">
+    <a class="btn btn-light" href="{{ url_for('admin_register_page') }}">+ Register Student</a>
+    <a class="btn btn-light" href="{{ url_for('attendance_xlsx',date=day.isoformat(),class_name=class_name,section=section) }}">Excel</a>
+    <a class="btn btn-light" href="{{ url_for('attendance_pdf',date=day.isoformat(),class_name=class_name,section=section) }}">PDF</a>
+    <button class="btn btn-primary" onclick="window.print()">Print</button>
+  </div>
+</div>
+<div class="card" style="margin-top:18px">
+  <div class="statline"><div><h2>Attendance Register</h2><div class="small muted">Search by name, admission number, roll number, class or section.</div></div><span class="pill">{{ rows|length }} students</span></div>
+  <form class="grid grid3 no-print" style="margin-top:14px" method="get">
+    <div class="field"><label>Search</label><input name="q" value="{{search}}" placeholder="Name / admission / roll"></div><div class="field"><label>Class</label><select name="class_name" onchange="this.form.submit()"><option value="">All classes</option>{% for c in classes %}<option value="{{c}}" {{'selected' if class_name==c else ''}}>{{c}}</option>{% endfor %}</select></div>
+    <div class="field"><label>Section</label><input name="section" value="{{section}}" placeholder="A" maxlength="10" oninput="this.value=this.value.toUpperCase().replace(/[^A-Z0-9]/g,'')"></div>
+    <div class="field"><label>Date</label><input type="date" name="date" value="{{day.isoformat()}}"></div>
+    <div class="actions" style="align-self:end"><button class="btn btn-primary">View register</button><a class="btn btn-light" href="{{url_for('admin_students')}}">Reset</a></div>
+  </form>
+  <div class="notice small" style="margin-top:14px"><b>Timing:</b> Before 08:30 = Present · 08:30–08:59 = Late · 09:00+ = Absent. Admin can override manually.</div>
+</div>
+<div class="card" style="margin-top:18px">
+  <div class="table-wrap"><table>
+    <thead><tr><th>#</th><th>Student</th><th>Admission</th><th>Class</th><th>Account</th><th>Attendance</th><th>Time</th><th class="no-print">Actions</th></tr></thead>
+    <tbody>
+    {% for row in rows %}{% set s=row.student %}{% set a=row.attendance %}
+      <tr>
+        <td>{{ loop.index }}</td>
+        <td><div style="display:flex;align-items:center;gap:9px">{% if s.account and s.account.profile_picture_path %}<img class="profile-avatar" src="{{ profile_picture_url(s.account) }}" alt="">{% else %}<span class="profile-initials">{{s.name[:2]|upper}}</span>{% endif %}<div><strong>{{s.name}}</strong><div class="tiny muted">Roll {{s.roll_number or '—'}}</div></div></div></td>
+        <td>{{s.admission_number}}</td>
+        <td>{{s.class_name}}{{('-'+s.section) if s.section else ''}}</td>
+        <td>{{s.account.username if s.account else '—'}}</td>
+        <td><span class="pill {{'pill-green' if a and a.status=='present' else 'pill-yellow' if a and a.status=='late' else 'pill-red'}}">{{a.status.title() if a else 'Absent'}}</span></td>
+        <td>{{a.time_in.strftime('%I:%M %p') if a and a.time_in else '—'}}</td>
+        <td class="no-print"><a class="btn btn-light btn-compact" href="{{url_for('student_face',sid=s.id)}}">{{'Retrain' if s.face_trained else 'Set face'}}</a> <a class="btn btn-light btn-compact" href="{{url_for('edit_student',sid=s.id)}}">Edit</a> <form method="post" action="{{url_for('delete_student',sid=s.id)}}" style="display:inline"><button class="btn btn-danger btn-compact" onclick="return confirm('Delete this student?')">Delete</button></form></td>
+      </tr>
+    {% else %}<tr><td colspan="8"><div class="empty">No students match the current filters.</div></td></tr>{% endfor %}
+    </tbody>
+  </table></div><div class="statline small" style="margin-top:12px"><span>Page {{page}} · {{total}} total students</span><span class="actions">{% if page>1 %}<a class="btn btn-light btn-compact" href="{{url_for('admin_students',page=page-1,class_name=class_name,section=section,date=day.isoformat(),q=search)}}">Previous</a>{% endif %}{% if page*per_page<total %}<a class="btn btn-light btn-compact" href="{{url_for('admin_students',page=page+1,class_name=class_name,section=section,date=day.isoformat(),q=search)}}">Next</a>{% endif %}</span></div></div>
+{% endblock %}
