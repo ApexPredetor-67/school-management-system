@@ -1,19 +1,262 @@
 <!doctype html>
 <html lang="en">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Sign in • DAV PS KKP</title><link rel="stylesheet" href="{{ url_for('static',filename='app.css') }}"></head>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Sign in • DAV PS KKP</title>
+
+  <link
+    rel="stylesheet"
+    href="{{ url_for('static', filename='app.css') }}"
+  >
+
+  <style>
+    .password-wrap {
+      position: relative;
+      width: 100%;
+    }
+
+    .password-wrap input {
+      width: 100%;
+      padding-right: 46px;
+      box-sizing: border-box;
+    }
+
+    .password-toggle {
+      position: absolute;
+      right: 10px;
+      top: 50%;
+      transform: translateY(-50%);
+
+      width: 32px;
+      height: 32px;
+
+      display: flex;
+      align-items: center;
+      justify-content: center;
+
+      border: 0;
+      background: transparent;
+      padding: 0;
+      margin: 0;
+
+      cursor: pointer;
+      color: #64748b;
+      border-radius: 6px;
+    }
+
+    .password-toggle:hover {
+      background: rgba(100, 116, 139, 0.08);
+      color: #334155;
+    }
+
+    .password-toggle:focus-visible {
+      outline: 2px solid #4f6bed;
+      outline-offset: 2px;
+    }
+
+    .password-toggle svg {
+      width: 20px;
+      height: 20px;
+      display: block;
+    }
+  </style>
+</head>
+
 <body>
+
 <div class="login">
+
   <form class="login-card" method="post" autocomplete="on">
+
     <div class="login-mark">⌂</div>
+
     <div class="eyebrow">DAV PS KKP</div>
-    <h1 style="margin:5px 0 3px">Welcome back</h1>
-    <p class="muted" style="margin-top:0">Sign in to the school management system.</p>
-    {% if error %}<div class="alert error">{{error}}</div>{% endif %}
-    <div class="field"><label>Username</label><input name="username" autocomplete="username" autofocus required></div>
-    <div class="field" style="margin-top:12px"><label>Password</label><div style="display:flex;gap:8px;align-items:center"><input id="loginPassword" name="password" type="password" autocomplete="current-password" required style="flex:1"><button type="button" class="password-toggle" aria-label="Show password" title="Show password" onclick="const p=document.getElementById('loginPassword');const on=p.type==='text';p.type=on?'password':'text';this.innerHTML=on?'<svg viewBox=\"0 0 24 24\"><path d=\"M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12Z\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"/><circle cx=\"12\" cy=\"12\" r=\"2.5\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"/></svg>':'<svg viewBox=\"0 0 24 24\"><path d=\"M3 3l18 18\" stroke=\"currentColor\" stroke-width=\"2\"/><path d=\"M2 12s3.5-6 10-6c1.7 0 3.2.4 4.5 1M22 12s-3.5 6-10 6c-1.7 0-3.2-.4-4.5-1\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"/></svg>';this.setAttribute('aria-label',on?'Show password':'Hide password')"> <svg viewBox="0 0 24 24"><path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12Z" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="12" r="2.5" fill="none" stroke="currentColor" stroke-width="2"/></svg></button></div></div>
-    <button class="btn btn-primary" style="width:100%;margin-top:16px">Sign in</button>
-    <div class="actions" style="justify-content:flex-end;margin-top:10px"><a class="small" href="/announcements">📢 Public announcements</a></div>
-    <p class="small muted" style="margin:13px 0 0">First-time accounts must set a new username and password before using the system.</p>
+
+    <h1 style="margin:5px 0 3px">
+      Welcome back
+    </h1>
+
+    <p class="muted" style="margin-top:0">
+      Sign in to the school management system.
+    </p>
+
+    {% if error %}
+      <div class="alert error">
+        {{ error }}
+      </div>
+    {% endif %}
+
+    <!-- Username -->
+    <div class="field">
+      <label for="username">
+        Username
+      </label>
+
+      <input
+        id="username"
+        name="username"
+        autocomplete="username"
+        autofocus
+        required
+      >
+    </div>
+
+    <!-- Password -->
+    <div class="field" style="margin-top:12px">
+
+      <label for="loginPassword">
+        Password
+      </label>
+
+      <div class="password-wrap">
+
+        <input
+          id="loginPassword"
+          name="password"
+          type="password"
+          autocomplete="current-password"
+          required
+        >
+
+        <button
+          type="button"
+          id="passwordToggle"
+          class="password-toggle"
+          aria-label="Show password"
+          title="Show password"
+        >
+          <!-- Eye -->
+          <svg
+            id="eyeOpen"
+            viewBox="0 0 24 24"
+            fill="none"
+            aria-hidden="true"
+          >
+            <path
+              d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12Z"
+              stroke="currentColor"
+              stroke-width="2"
+            />
+            <circle
+              cx="12"
+              cy="12"
+              r="2.5"
+              stroke="currentColor"
+              stroke-width="2"
+            />
+          </svg>
+
+          <!-- Eye off -->
+          <svg
+            id="eyeClosed"
+            viewBox="0 0 24 24"
+            fill="none"
+            aria-hidden="true"
+            style="display:none"
+          >
+            <path
+              d="M3 3l18 18"
+              stroke="currentColor"
+              stroke-width="2"
+            />
+
+            <path
+              d="M2 12s3.5-6 10-6c1.7 0 3.2.4 4.5 1M22 12s-3.5 6-10 6c-1.7 0-3.2-.4-4.5-1"
+              stroke="currentColor"
+              stroke-width="2"
+            />
+          </svg>
+
+        </button>
+
+      </div>
+    </div>
+
+    <!-- Submit -->
+    <button
+      type="submit"
+      class="btn btn-primary"
+      style="width:100%;margin-top:16px"
+    >
+      Sign in
+    </button>
+
+    <!-- Public announcements -->
+    <div
+      class="actions"
+      style="justify-content:flex-end;margin-top:10px"
+    >
+      <a
+        class="small"
+        href="{{ url_for('announcements') }}"
+      >
+        📢 Public announcements
+      </a>
+    </div>
+
+    <p
+      class="small muted"
+      style="margin:13px 0 0"
+    >
+      First-time accounts must set a new username and password
+      before using the system.
+    </p>
+
   </form>
+
 </div>
-</body></html>
+
+
+<script>
+(function () {
+  const passwordInput = document.getElementById("loginPassword");
+  const toggleButton = document.getElementById("passwordToggle");
+  const eyeOpen = document.getElementById("eyeOpen");
+  const eyeClosed = document.getElementById("eyeClosed");
+
+  if (!passwordInput || !toggleButton) {
+    return;
+  }
+
+  toggleButton.addEventListener("click", function () {
+
+    const showing = passwordInput.type === "text";
+
+    passwordInput.type = showing ? "password" : "text";
+
+    if (showing) {
+      eyeOpen.style.display = "block";
+      eyeClosed.style.display = "none";
+
+      toggleButton.setAttribute(
+        "aria-label",
+        "Show password"
+      );
+
+      toggleButton.setAttribute(
+        "title",
+        "Show password"
+      );
+
+    } else {
+
+      eyeOpen.style.display = "none";
+      eyeClosed.style.display = "block";
+
+      toggleButton.setAttribute(
+        "aria-label",
+        "Hide password"
+      );
+
+      toggleButton.setAttribute(
+        "title",
+        "Hide password"
+      );
+    }
+  });
+})();
+</script>
+
+</body>
+</html>
