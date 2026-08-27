@@ -19,25 +19,25 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY requirements.txt .
 
-# Install everything EXCEPT face-recognition/dlib.
 RUN pip install --no-cache-dir -r requirements.txt
 
-# IMPORTANT:
-# Install the PRECOMPILED dlib wheel BEFORE face-recognition.
-# --only-binary guarantees pip will not compile dlib.
+# Precompiled dlib — never build dlib from source
 RUN pip install --no-cache-dir \
     --only-binary=:all: \
+    --no-deps \
     dlib-bin==20.0.1
 
 RUN pip install --no-cache-dir \
+    --no-deps \
     face-recognition-models==0.3.0
 
-# face-recognition is deliberately installed without dependencies
-# because dlib-bin already provides the dlib Python module.
 RUN pip install --no-cache-dir \
     --no-deps \
     face-recognition==1.3.0
 
+# Verify the face stack during the IMAGE BUILD,
+# so Render fails here instead of endlessly restarting workers.
+RUN python -c "import dlib; import face_recognition_models; import face_recognition; print('FACE STACK OK')"
 COPY . .
 
 EXPOSE 10000
