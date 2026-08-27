@@ -9,8 +9,8 @@ from dotenv import load_dotenv
 from flask import Flask, abort, flash, jsonify, redirect, render_template, request, send_file, session, url_for, g
 from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.security import check_password_hash, generate_password_hash
-from sqlalchemy import func, or_, and_, text, case
-from sqlalchemy.orm import selectinload
+from sqlalchemy import func, or_, and_, text, case, cast, Integer
+from sqlalchemy.orm import selectinload 
 import threading
 from sqlalchemy.exc import IntegrityError
 
