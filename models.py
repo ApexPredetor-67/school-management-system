@@ -180,13 +180,40 @@ class Attendance(db.Model):
     student = db.relationship('Student')
     __table_args__ = (UniqueConstraint('student_id','date', name='uq_attendance'), Index('ix_attendance_date_status','date','status'), Index('ix_attendance_student_date','student_id','date'), Index('ix_attendance_student_date_status','student_id','date','status'), Index('ix_attendance_date_student','date','student_id'))
 
-
 class SchoolCalendar(db.Model):
     __tablename__ = 'school_calendar'
+
     id = db.Column(db.Integer, primary_key=True)
-    date = db.Column(db.Date, unique=True, nullable=False, index=True)
-    is_working = db.Column(db.Boolean, default=True, nullable=False)
-    reason = db.Column(db.String(255))
+
+    date = db.Column(
+        db.Date,
+        unique=True,
+        nullable=False,
+        index=True
+    )
+
+    is_working = db.Column(
+        db.Boolean,
+        default=True,
+        nullable=False
+    )
+
+    reason = db.Column(
+        db.String(255)
+    )
+
+    created_at = db.Column(
+        db.DateTime,
+        default=now_local,
+        nullable=False
+    )
+
+    updated_at = db.Column(
+        db.DateTime,
+        default=now_local,
+        onupdate=now_local,
+        nullable=False
+    )
 
 
 class Announcement(db.Model):
