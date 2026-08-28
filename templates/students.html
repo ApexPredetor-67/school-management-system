@@ -6,8 +6,10 @@
   <div class="hero"><div class="eyebrow">School</div><h1>Students</h1><p>Attendance register and student access overview.</p></div>
   <div class="actions no-print">
     <a class="btn btn-light" href="{{ url_for('admin_register_page') }}">+ Register Student</a>
+    {% if has_selection %}
     <a class="btn btn-light" href="{{ url_for('attendance_xlsx',date=day.isoformat(),class_name=class_name,section=section) }}">Excel</a>
     <a class="btn btn-light" href="{{ url_for('attendance_pdf',date=day.isoformat(),class_name=class_name,section=section) }}">PDF</a>
+    {% endif %}
     <button class="btn btn-primary" onclick="window.print()">Print</button>
   </div>
 </div>
@@ -21,6 +23,14 @@
   </form>
   <div class="notice small" style="margin-top:14px"><b>Timing:</b> Before 08:30 = Present · 08:30–08:59 = Late · 09:00+ = Absent. Admin can override manually.</div>
 </div>
+{% if not has_selection %}
+<div class="card" style="margin-top:18px">
+  <div class="empty" style="padding:32px;text-align:center">
+    <strong>Select a class or search for a student.</strong>
+    <div class="small muted" style="margin-top:6px">Students are hidden until you choose a class, section, roll number, admission number, or search for a name.</div>
+  </div>
+</div>
+{% else %}
 <div class="card" style="margin-top:18px">
   <div class="table-wrap"><table>
     <thead><tr><th>#</th><th>Student</th><th>Admission</th><th>Class</th><th>Account</th><th>Attendance</th><th>Time</th><th class="no-print">Actions</th></tr></thead>
@@ -38,5 +48,6 @@
       </tr>
     {% else %}<tr><td colspan="8"><div class="empty">No students match the current filters.</div></td></tr>{% endfor %}
     </tbody>
-  </table></div><div class="statline small" style="margin-top:12px"><span>Page {{page}} · {{total}} total students</span><span class="actions">{% if page>1 %}<a class="btn btn-light btn-compact" href="{{url_for('admin_students',page=page-1,class_name=class_name,section=section,date=day.isoformat(),q=search)}}">Previous</a>{% endif %}{% if page*per_page<total %}<a class="btn btn-light btn-compact" href="{{url_for('admin_students',page=page+1,class_name=class_name,section=section,date=day.isoformat(),q=search)}}">Next</a>{% endif %}</span></div></div>
+  </table></div><div class="statline small" style="margin-top:12px"><span>Page {{page}} · {{total}} total students</span><span class="actions">{% if page>1 %}<a class="btn btn-light btn-compact" href="{{url_for('admin_students',page=page-1,class_name=class_name,section=section,date=day.isoformat(),q=search,roll=roll,admission=admission)}}">Previous</a>{% endif %}{% if page*per_page<total %}<a class="btn btn-light btn-compact" href="{{url_for('admin_students',page=page+1,class_name=class_name,section=section,date=day.isoformat(),q=search,roll=roll,admission=admission)}}">Next</a>{% endif %}</span></div></div>
+{% endif %}
 {% endblock %}
