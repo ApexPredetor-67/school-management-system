@@ -2,4 +2,135 @@
 <div class="hero-row"><div class="hero"><div class="eyebrow">Academic Management</div><h1>Marks by Subject</h1><p>Choose a subject first. Class teachers can enter marks for every subject for the students in their assigned class/section.</p></div><div class="actions no-print"><a class="btn btn-light" href="{{url_for('results')}}">Results & Analysis</a><a class="btn btn-light" href="{{url_for('results_xlsx')}}">Export Excel</a></div></div>
 <div class="card" style="margin-top:18px"><div class="statline"><h2>Subjects</h2><span class="pill">{{ all_subjects|length }}</span></div><div class="quick-grid" style="margin-top:12px">{% for subj in all_subjects %}<a class="quick {{'selected' if selected_subject==subj.code else ''}}" href="{{url_for('academics',subject=subj.code)}}"><strong>{{subj.name}}</strong><span>{{subj.code}}</span></a>{% else %}<div class="empty">No subjects are available.</div>{% endfor %}</div></div>
 <div class="card" style="margin-top:18px"><div class="statline"><div><h2>{% if selected_subject and subjects %}{{subjects[0].name}}{% else %}Select a subject{% endif %}</h2><div class="small muted">PT-1 /40 · PT-2 /80 · PT-3 /40 · Final Examination /80</div></div><span class="pill pill-blue">{{students|length}} students loaded</span></div>{% if subjects %}<div class="table-wrap" style="margin-top:12px"><table><thead><tr><th>Student</th>{% for e in exams %}<th>{{e.name}} / {{e.max_marks}}</th>{% endfor %}</tr></thead><tbody>{% for s in students %}{% set subj=subjects[0] %}<tr><td><strong>{{s.name}}</strong><div class="tiny muted">{{s.admission_number}} · {{s.class_name}}{% if s.section %}-{{s.section}}{% endif %}</div></td>{% for e in exams %}<td>{% if session.get('role')=='teacher' %}<input style="width:90px" data-sid="{{s.id}}" data-subj="{{subj.code}}" data-exam="{{e.id}}" value="">{% else %}<span>{{ '—' }}</span>{% endif %}</td>{% endfor %}</tr>{% else %}<tr><td colspan="5"><div class="empty">Select a subject above.</div></td></tr>{% endfor %}</tbody></table></div>{% endif %}<div class="small muted" style="margin-top:10px">Class teachers can enter marks for all subjects in their assigned class. Admins can view marks but cannot edit them. Marks are validated against the exam maximum and locked marks remain read-only.</div></div>
-<script>document.querySelectorAll('input[data-sid]').forEach(el=>el.addEventListener('change',async()=>{const r=await (window.csrfFetch||fetch)('/api/marks',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':'{{ csrf_token }}'},body:JSON.stringify({student_id:el.dataset.sid,subject_code:el.dataset.subj,exam_id:el.dataset.exam,marks:el.value})});const d=await r.json();if(!r.ok)alert(d.error||'Could not save mark');else{el.style.borderColor='#1b9a68';setTimeout(()=>el.style.borderColor='',500)}}));</script>{% endblock %}
+<script>
+(function () {
+    async function getCsrfToken() {
+        try {
+            const response = await fetch(
+                '/api/csrf',
+                {
+                    credentials: 'same-origin'
+                }
+            );
+
+            if (!response.ok) {
+                return null;
+            }
+
+            const data = await response.json();
+
+            return (
+                data.token ||
+                data.csrf_token ||
+                null
+            );
+        } catch (error) {
+            console.error(
+                'Could not refresh CSRF token:',
+                error
+            );
+
+            return null;
+        }
+    }
+
+    async function saveMark(input) {
+        const token =
+            await getCsrfToken();
+
+        const body = {
+            student_id:
+                input.dataset.sid,
+
+            subject_code:
+                input.dataset.subj,
+
+            exam_id:
+                input.dataset.exam,
+
+            marks:
+                input.value
+        };
+
+        const headers = {
+            'Content-Type':
+                'application/json'
+        };
+
+        if (token) {
+            headers['X-CSRFToken'] =
+                token;
+        }
+
+        let response = await fetch(
+            '/api/marks',
+            {
+                method: 'POST',
+                credentials: 'same-origin',
+                headers,
+                body: JSON.stringify(body)
+            }
+        );
+
+        if (
+            response.status === 400
+            || response.status === 403
+        ) {
+            const refreshed =
+                await getCsrfToken();
+
+            if (refreshed) {
+                headers['X-CSRFToken'] =
+                    refreshed;
+
+                response = await fetch(
+                    '/api/marks',
+                    {
+                        method: 'POST',
+                        credentials:
+                            'same-origin',
+                        headers,
+                        body:
+                            JSON.stringify(body)
+                    }
+                );
+            }
+        }
+
+        let data = {};
+
+        try {
+            data =
+                await response.json();
+        } catch (_) {}
+
+        if (!response.ok) {
+            alert(
+                data.error ||
+                'Could not save mark.'
+            );
+            return;
+        }
+
+        input.style.borderColor =
+            '#1b9a68';
+
+        setTimeout(function () {
+            input.style.borderColor =
+                '';
+        }, 500);
+    }
+
+    document
+        .querySelectorAll('input[data-sid]')
+        .forEach(function (input) {
+            input.addEventListener(
+                'change',
+                function () {
+                    saveMark(input);
+                }
+            );
+        });
+})();
+</script>
+{% endblock %}
