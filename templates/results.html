@@ -31,10 +31,16 @@
 <div class="card" style="margin-top:18px">
   <div class="statline"><div><h2>Publish results</h2><div class="small muted">Students and parents can see results only after publication.</div></div><span class="pill pill-green">Admin only</span></div>
   <form method="post" action="{{url_for('publish_results')}}" class="actions" style="margin-top:14px">
-    <select name="exam_id" required>{% for e in exams %}<option value="{{e.id}}">{{e.name}}</option>{% endfor %}</select>
+    <input type="hidden" name="_csrf" value="{{csrf_token}}"><select name="exam_id" required>{% for e in exams if e.is_final %}<option value="{{e.id}}">{{e.name}}</option>{% endfor %}</select>
     <input name="class_name" placeholder="Class IX" required>
     <input name="section" placeholder="A">
     <button class="btn btn-primary">Publish to matching students + parents</button>
+  </form>
+  <form method="post" action="{{url_for('unpublish_results')}}" class="actions" style="margin-top:8px">
+    <input type="hidden" name="_csrf" value="{{csrf_token}}"><select name="exam_id" required>{% for e in exams if e.is_final %}<option value="{{e.id}}">{{e.name}}</option>{% endfor %}</select>
+    <input name="class_name" placeholder="Class IX" required>
+    <input name="section" placeholder="A">
+    <button class="btn btn-light">Unpublish for this class</button>
   </form>
 </div>
 {% endif %}
