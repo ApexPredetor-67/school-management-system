@@ -193,7 +193,7 @@ def _csrf_guard():
     _ensure_csrf_token()
     if request.method not in {'POST','PUT','PATCH','DELETE'}:
         return None
-    if request.path in {'/login','/api/auth/login','/api/auth/refresh','/healthz'}:
+    if request.path in {'/login','/api/auth/login','/api/auth/refresh','/healthz','/api/attendance/scan'}:
         return None
     # Bearer-token API calls are authenticated independently of browser CSRF.
     if request.headers.get('Authorization','').lower().startswith('bearer '):
@@ -576,6 +576,13 @@ def school_timezone():
         if zone_name == 'Asia/Kolkata':
             return __import__('datetime').timezone(timedelta(hours=5, minutes=30), 'IST')
         return __import__('datetime').timezone.utc
+def now_local():
+    """Return the real current time in the configured school timezone.
+
+    Unlike school_now(), this intentionally ignores the simulated school
+    clock override. It is used only for diagnostics/display timestamps.
+    """
+    return datetime.now(school_timezone())
 
 def _configured_clock_time():
     row=db.session.get(SchoolClock,1)
@@ -955,20 +962,136 @@ def register_student_face_complete():
 @app.get('/admin/students')
 @admin_required
 def admin_students():
-    day=school_date(); search=' '.join((request.args.get('q') or '').split()); cls=request.args.get('class_name','').strip(); sec=request.args.get('section','').strip(); roll=request.args.get('roll','').strip(); adm=request.args.get('admission','').strip(); page=max(1,request.args.get('page',1,type=int)); per_page=25
-    q=Student.query.filter_by(active=True)
-    if search:
-        like=f'%{search}%'; q=q.filter(or_(Student.name.ilike(like),Student.admission_number.ilike(like),Student.roll_number.ilike(like),Student.class_name.ilike(like),Student.section.ilike(like)))
-    if cls: q=q.filter(Student.class_name.ilike(cls))
-    if sec: q=q.filter(Student.section.ilike(sec))
-    if roll: q=q.filter(Student.roll_number.ilike(f'%{roll}%'))
-    if adm: q=q.filter(Student.admission_number.ilike(f'%{adm}%'))
-    total=q.count(); rows_students=student_order(q).offset((page-1)*per_page).limit(per_page).all()
-    ids=[x.id for x in rows_students]; ats=Attendance.query.filter(Attendance.date==day,Attendance.student_id.in_(ids)).all() if ids else []
-    att_by={a.student_id:a for a in ats}; rows=[{'student':st,'attendance':att_by.get(st.id)} for st in rows_students]
-    classes=[r[0] for r in db.session.query(Student.class_name).filter(Student.active.is_(True)).distinct().order_by(Student.class_name).all()]; sections=[r[0] for r in db.session.query(Student.section).filter(Student.active.is_(True),Student.section!='').distinct().order_by(Student.section).all()]
-    return render_template('students.html',rows=rows,day=day,class_name=cls,section=sec,classes=classes,sections=sections,page=page,per_page=per_page,total=total,search=search,roll=roll,admission=adm)
+    """Render the student register without eagerly loading all students.
 
+    The register stays empty until the admin selects a class/section or
+    searches by name, roll number, or admission number. Deleted login
+    accounts are detached from their preserved student record, so only
+    students with an active record *and* an attached account appear here.
+    """
+    day = school_date()
+    search = ' '.join((request.args.get('q') or '').split())
+    cls = (request.args.get('class_name') or '').strip()
+    sec = (request.args.get('section') or '').strip().upper()
+    roll = (request.args.get('roll') or '').strip()
+    adm = (request.args.get('admission') or '').strip()
+    page = max(1, request.args.get('page', 1, type=int))
+    per_page = 25
+
+    classes = [
+        row[0] for row in (
+            db.session.query(Student.class_name)
+            .filter(Student.active.is_(True))
+            .filter(Student.account_id.isnot(None))
+            .filter(Student.class_name.isnot(None))
+            .distinct()
+            .order_by(Student.class_name)
+            .all()
+        )
+    ]
+
+    sections = [
+        row[0] for row in (
+            db.session.query(Student.section)
+            .filter(Student.active.is_(True))
+            .filter(Student.account_id.isnot(None))
+            .filter(Student.section.isnot(None))
+            .filter(Student.section != '')
+            .distinct()
+            .order_by(Student.section)
+            .all()
+        )
+    ]
+
+    has_selection = bool(search or cls or sec or roll or adm)
+    rows = []
+    total = 0
+
+    if has_selection:
+        q = Student.query.filter(
+            Student.active.is_(True),
+            Student.account_id.isnot(None)
+        )
+
+        if search:
+            like = f'%{search}%'
+            q = q.filter(or_(
+                Student.name.ilike(like),
+                Student.admission_number.ilike(like),
+                Student.roll_number.ilike(like),
+                Student.class_name.ilike(like),
+                Student.section.ilike(like),
+            ))
+
+        if cls:
+            q = q.filter(
+                func.upper(func.trim(Student.class_name)) == cls.upper()
+            )
+
+        if sec:
+            q = q.filter(
+                func.upper(func.trim(Student.section)) == sec
+            )
+
+        if roll:
+            q = q.filter(
+                Student.roll_number.ilike(f'%{roll}%')
+            )
+
+        if adm:
+            q = q.filter(
+                Student.admission_number.ilike(f'%{adm}%')
+            )
+
+        total = q.count()
+
+        students = (
+            student_order(q)
+            .offset((page - 1) * per_page)
+            .limit(per_page)
+            .all()
+        )
+
+        ids = [student.id for student in students]
+        attendance_rows = (
+            Attendance.query
+            .filter(
+                Attendance.date == day,
+                Attendance.student_id.in_(ids)
+            )
+            .all()
+            if ids else []
+        )
+
+        attendance_by_student = {
+            row.student_id: row
+            for row in attendance_rows
+        }
+
+        rows = [
+            {
+                'student': student,
+                'attendance': attendance_by_student.get(student.id)
+            }
+            for student in students
+        ]
+
+    return render_template(
+        'students.html',
+        rows=rows,
+        day=day,
+        class_name=cls,
+        section=sec,
+        classes=classes,
+        sections=sections,
+        page=page,
+        per_page=per_page,
+        total=total,
+        search=search,
+        roll=roll,
+        admission=adm,
+        has_selection=has_selection,
+    )
 @app.route('/admin/teachers', methods=['GET','POST'])
 @admin_required
 def admin_teachers():
@@ -1037,7 +1160,7 @@ def students_self():
     acct=current_account(); rows=allowed_students_for_account(acct).all(); return render_template('portal_students.html',students=rows,role=acct.role)
 
 @app.get('/api/school-day')
-@staff_required
+
 def school_day_api():
     # Scanner status must never fail just because a calendar row is malformed.
     # A failed calendar lookup falls back to the normal Mon-Fri rule.
@@ -1054,7 +1177,7 @@ def school_day_api():
     return jsonify({'date':today.isoformat(),'is_working':working,'reason':reason,'calendar_source':source,'override':source=='calendar','time':effective.strftime('%H:%M:%S'),'live_server_time':now_local().strftime('%H:%M'),'using_override':bool(get_school_clock_override()),'attendance_from':os.getenv('ATTENDANCE_PRESENT_FROM','07:30'),'late_after':os.getenv('ATTENDANCE_LATE_AFTER','08:30'),'absent_after':os.getenv('ATTENDANCE_ABSENT_AFTER','09:00')})
 
 @app.get('/attendance/scan')
-@staff_required
+
 def attendance_scan_page():
     if not ip_allowed('SCANNER_ALLOWED_IPS'):
         abort(403)
@@ -1065,7 +1188,11 @@ def attendance_scan_page():
 def attendance_page():
     try: day=datetime.strptime(request.args.get('date',school_date().isoformat()),'%Y-%m-%d').date()
     except ValueError: day=school_date()
-    q=allowed_students_for_account(current_account()); cls=normalize_class(request.args.get('class_name','')); sec=normalize_section(request.args.get('section',''))
+    acct=current_account()
+    q=allowed_students_for_account(acct)
+    if acct.role=='admin':
+        q=q.filter(Student.account_id.isnot(None))
+    cls=normalize_class(request.args.get('class_name','')); sec=normalize_section(request.args.get('section',''))
     if cls: q=q.filter(Student.class_name==cls)
     if sec: q=q.filter(Student.section==sec)
     search=request.args.get('q','').strip()
@@ -1075,7 +1202,7 @@ def attendance_page():
     students=student_order(q).offset((page-1)*per_page).limit(per_page).all()
     ids=[x.id for x in students]; ats=Attendance.query.filter(Attendance.date==day,Attendance.student_id.in_(ids)).all() if ids else []
     att_by={a.student_id:a for a in ats}; rows=[{'student':st,'attendance':att_by.get(st.id)} for st in students]
-    classes=sorted({x.class_name for x in allowed_students_for_account(current_account()).with_entities(Student.class_name).distinct().all()},key=lambda x:(class_number(x) or 99,x))
+    classes=sorted({x.class_name for x in q.with_entities(Student.class_name).distinct().all()},key=lambda x:(class_number(x) or 99,x))
     return render_template('attendance.html',rows=rows,day=day,face_available=face_available(),classes=classes,class_name=cls,section=sec,page=page,total=total,per_page=per_page,search=search)
 
 @app.post('/api/attendance/mark')
@@ -1104,7 +1231,7 @@ def mark_attendance():
     return jsonify({'ok':True,'status':status})
 
 @app.post('/api/attendance/scan')
-@staff_required
+
 def attendance_scan():
     if not ip_allowed('SCANNER_ALLOWED_IPS'):
         return jsonify({'error':'Scanner access is restricted to the configured scanner network.'}),403
@@ -1135,10 +1262,13 @@ def attendance_scan():
         return jsonify({'error':f'The attendance window closed at {absent_after.strftime("%H:%M")}. An admin can manually mark the student present or late.','school_day':True}),409
     scan_status='late' if now >= late_after else 'present'
     tolerance=float(os.getenv('FACE_RECOGNITION_TOLERANCE','0.48'))
-    acct=current_account()
-    q=Student.query.filter_by(active=True,face_trained=True)
-    if acct.role!='admin':
-        q=allowed_students_for_account(acct).filter(Student.face_trained.is_(True))
+    q = Student.query.filter(
+        Student.active.is_(True),
+        Student.account_id.isnot(None),
+        Student.face_trained.is_(True)
+    )
+
+    students=student_order(q).all()
     students=student_order(q).all()
     known=[]
     for st in students:
@@ -1214,11 +1344,10 @@ def attendance_scan():
         return jsonify({'error':'Attendance scan failed. Please try again.'}),500
 
 @app.get('/api/attendance/marklist')
-@staff_required
 def attendance_marklist():
     day=school_date()
     try:
-        query=allowed_students_for_account(current_account()) if current_account().role!='admin' else Student.query.filter_by(active=True)
+        query=allowed_students_for_account(current_account()) if current_account().role!='admin' else Student.query.filter(Student.active.is_(True), Student.account_id.isnot(None))
         students=student_order(query).all()
         ids=[st.id for st in students]
         records=Attendance.query.filter(Attendance.date==day,Attendance.student_id.in_(ids)).all() if ids else []
@@ -1692,7 +1821,7 @@ def admin_accounts():
 
     teacher_items=[]; teacher_count=0; assignment_map={}; teacher_accounts={}
     if not role or role=='teacher':
-        tq=Teacher.query.filter_by(active=True)
+        tq=Teacher.query.filter(Teacher.active.is_(True),Teacher.account_id.isnot(None))
         if search:
             tq=tq.outerjoin(Account,Teacher.account_id==Account.id).filter(or_(Teacher.name.ilike(f'%{search}%'),Account.username.ilike(f'%{search}%')))
         teacher_count=tq.count(); teacher_items=tq.order_by(Teacher.name).offset((page-1)*per_page).limit(per_page).all()
@@ -1704,7 +1833,7 @@ def admin_accounts():
 
     student_items=[]; student_count=0; parent_count_by_student={}
     if not role or role=='student':
-        sq=Student.query.filter_by(active=True)
+        sq=Student.query.filter(Student.active.is_(True),Student.account_id.isnot(None))
         if search:
             sq=sq.outerjoin(Account,Student.account_id==Account.id).filter(or_(Student.name.ilike(f'%{search}%'),Student.admission_number.ilike(f'%{search}%'),Student.roll_number.ilike(f'%{search}%'),Account.username.ilike(f'%{search}%')))
         student_count=sq.count(); student_items=student_order(sq).offset((page-1)*per_page).limit(per_page).all()
@@ -1715,7 +1844,7 @@ def admin_accounts():
 
     parent_items=[]; parent_count=0; child_map={}
     if not role or role=='parent':
-        pq=Parent.query.outerjoin(Account,Parent.account_id==Account.id).filter(or_(Account.id.is_(None),Account.active.is_(True)))
+        pq=Parent.query.join(Account,Parent.account_id==Account.id).filter(Parent.account_id.isnot(None),Account.active.is_(True))
         if search:
             like=f'%{search}%'; pq=pq.filter(or_(Parent.name.ilike(like),Account.username.ilike(like),Parent.phone.ilike(like),Parent.email.ilike(like)))
         parent_count=pq.count(); parent_items=pq.order_by(Parent.name).offset((page-1)*per_page).limit(per_page).all()
