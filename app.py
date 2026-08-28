@@ -402,11 +402,67 @@ def normalize_section(value):
     return re.sub(r'[^A-Z0-9]', '', raw)[:10]
 
 def student_order(query):
-    """Stable school ordering: class number -> section -> natural roll -> name."""
+    """
+    Consistent school ordering:
+
+    1. Class
+    2. Section
+    3. Numeric roll number
+    4. Non-numeric roll number
+    5. Student name
+    6. Student ID
+
+    Numeric rolls are ordered naturally:
+    1, 2, 3, 10, 11
+
+    Legacy non-numeric rolls do not crash PostgreSQL.
+    """
+
     class_rank = case(
-        {'NURSERY': 0, 'LKG': 1, 'UKG': 2, **{k:v+2 for k,v in ROMAN_TO_INT.items()}},
+        {
+            'NURSERY': 0,
+            'LKG': 1,
+            'UKG': 2,
+            **{
+                k: v + 2
+                for k, v in ROMAN_TO_INT.items()
+            }
+        },
         value=func.upper(Student.class_name),
-        else_=99,
+        else_=99
+    )
+
+    roll_text = func.trim(
+        func.coalesce(Student.roll_number, '')
+    )
+
+    numeric_only = roll_text.op('~')(
+        '^[0-9]+$'
+    )
+
+    roll_num = case(
+        (
+            numeric_only,
+            cast(roll_text, Integer)
+        ),
+        else_=2147483647
+    )
+
+    return query.order_by(
+        class_rank,
+        func.upper(
+            func.coalesce(Student.class_name, '')
+        ),
+        func.upper(
+            func.coalesce(Student.section, '')
+        ),
+        roll_num,
+        roll_text,
+        func.upper(
+            func.coalesce(Student.name, '')
+        ),
+        Student.id
+    )
     )
     roll_text=func.trim(Student.roll_number)
     roll_num=cast(func.nullif(roll_text, ''), Integer)
