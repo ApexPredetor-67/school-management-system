@@ -955,109 +955,19 @@ def register_student_face_complete():
 @app.get('/admin/students')
 @admin_required
 def admin_students():
-    """Admin student register.
-
-    Students are intentionally NOT loaded on the initial page. The admin must
-    first choose a class/section or enter a search/roll/admission filter. This
-    keeps the page fast on large school datasets while preserving the same UI.
-    """
-    day = school_date()
-    search = ' '.join((request.args.get('q') or '').split())
-    cls = request.args.get('class_name', '').strip()
-    sec = request.args.get('section', '').strip()
-    roll = request.args.get('roll', '').strip()
-    adm = request.args.get('admission', '').strip()
-    page = max(1, request.args.get('page', 1, type=int))
-    per_page = 25
-
-    classes = [
-        r[0] for r in db.session.query(Student.class_name)
-        .filter(Student.active.is_(True))
-        .filter(Student.class_name.isnot(None))
-        .distinct()
-        .order_by(Student.class_name)
-        .all()
-    ]
-    sections = [
-        r[0] for r in db.session.query(Student.section)
-        .filter(Student.active.is_(True))
-        .filter(Student.section.isnot(None))
-        .filter(Student.section != '')
-        .distinct()
-        .order_by(Student.section)
-        .all()
-    ]
-
-    # Do not query/load student rows until the admin actually requests them.
-    has_selection = bool(
-        search or cls or sec or roll or adm
-    )
-
-    rows = []
-    total = 0
-
-    if has_selection:
-        q = Student.query.filter(Student.active.is_(True))
-
-        if search:
-            like = f'%{search}%'
-            q = q.filter(or_(
-                Student.name.ilike(like),
-                Student.admission_number.ilike(like),
-                Student.roll_number.ilike(like),
-                Student.class_name.ilike(like),
-                Student.section.ilike(like),
-            ))
-
-        if cls:
-            q = q.filter(Student.class_name.ilike(cls))
-        if sec:
-            q = q.filter(Student.section.ilike(sec))
-        if roll:
-            q = q.filter(Student.roll_number.ilike(f'%{roll}%'))
-        if adm:
-            q = q.filter(Student.admission_number.ilike(f'%{adm}%'))
-
-        total = q.count()
-        rows_students = (
-            student_order(q)
-            .offset((page - 1) * per_page)
-            .limit(per_page)
-            .all()
-        )
-
-        ids = [x.id for x in rows_students]
-        ats = (
-            Attendance.query
-            .filter(
-                Attendance.date == day,
-                Attendance.student_id.in_(ids)
-            )
-            .all()
-            if ids else []
-        )
-        att_by = {a.student_id: a for a in ats}
-        rows = [
-            {'student': st, 'attendance': att_by.get(st.id)}
-            for st in rows_students
-        ]
-
-    return render_template(
-        'students.html',
-        rows=rows,
-        day=day,
-        class_name=cls,
-        section=sec,
-        classes=classes,
-        sections=sections,
-        page=page,
-        per_page=per_page,
-        total=total,
-        search=search,
-        roll=roll,
-        admission=adm,
-        has_selection=has_selection,
-    )
+    day=school_date(); search=' '.join((request.args.get('q') or '').split()); cls=request.args.get('class_name','').strip(); sec=request.args.get('section','').strip(); roll=request.args.get('roll','').strip(); adm=request.args.get('admission','').strip(); page=max(1,request.args.get('page',1,type=int)); per_page=25
+    q=Student.query.filter_by(active=True)
+    if search:
+        like=f'%{search}%'; q=q.filter(or_(Student.name.ilike(like),Student.admission_number.ilike(like),Student.roll_number.ilike(like),Student.class_name.ilike(like),Student.section.ilike(like)))
+    if cls: q=q.filter(Student.class_name.ilike(cls))
+    if sec: q=q.filter(Student.section.ilike(sec))
+    if roll: q=q.filter(Student.roll_number.ilike(f'%{roll}%'))
+    if adm: q=q.filter(Student.admission_number.ilike(f'%{adm}%'))
+    total=q.count(); rows_students=student_order(q).offset((page-1)*per_page).limit(per_page).all()
+    ids=[x.id for x in rows_students]; ats=Attendance.query.filter(Attendance.date==day,Attendance.student_id.in_(ids)).all() if ids else []
+    att_by={a.student_id:a for a in ats}; rows=[{'student':st,'attendance':att_by.get(st.id)} for st in rows_students]
+    classes=[r[0] for r in db.session.query(Student.class_name).filter(Student.active.is_(True)).distinct().order_by(Student.class_name).all()]; sections=[r[0] for r in db.session.query(Student.section).filter(Student.active.is_(True),Student.section!='').distinct().order_by(Student.section).all()]
+    return render_template('students.html',rows=rows,day=day,class_name=cls,section=sec,classes=classes,sections=sections,page=page,per_page=per_page,total=total,search=search,roll=roll,admission=adm)
 
 @app.route('/admin/teachers', methods=['GET','POST'])
 @admin_required
