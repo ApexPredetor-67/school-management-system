@@ -1,1 +1,269 @@
-<!doctype html><html><head><meta charset="utf-8"><title>Restricted Audit</title><link rel="stylesheet" href="{{url_for('static',filename='app.css')}}"></head><body><div class="login"><form class="login-card" method="post"><input type="hidden" name="_csrf" value="{{ csrf_token }}"><h1>Restricted audit</h1><p class="muted">This page is deliberately not linked from the normal school website.</p>{% if error %}<div class="alert error">{{error}}</div>{% endif %}<div class="field"><label>Audit username</label><input name="username"></div><div class="field" style="margin-top:12px"><label>Audit password</label><div style="display:flex;gap:8px;align-items:center"><input id="auditPassword" name="password" type="password" autocomplete="current-password" style="flex:1"><button type="button" class="password-toggle" aria-label="Show password" title="Show password" onclick="const p=document.getElementById('auditPassword');const on=p.type==='text';p.type=on?'password':'text';this.innerHTML=on?'<svg viewBox=\"0 0 24 24\"><path d=\"M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12Z\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"/><circle cx=\"12\" cy=\"12\" r=\"2.5\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"/></svg>':'<svg viewBox=\"0 0 24 24\"><path d=\"M3 3l18 18\" stroke=\"currentColor\" stroke-width=\"2\"/><path d=\"M2 12s3.5-6 10-6c1.7 0 3.2.4 4.5 1M22 12s-3.5 6-10 6c-1.7 0-3.2-.4-4.5-1\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"/></svg>';this.setAttribute('aria-label',on?'Show password':'Hide password')"> <svg viewBox="0 0 24 24"><path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12Z" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="12" r="2.5" fill="none" stroke="currentColor" stroke-width="2"/></svg></button></div></div><button class="btn btn-primary" style="margin-top:14px;width:100%">Open audit</button></form></div></body></html>
+<!doctype html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8">
+    <meta
+        name="viewport"
+        content="width=device-width,initial-scale=1"
+    >
+
+    <title>Restricted Audit</title>
+
+    <link
+        rel="stylesheet"
+        href="{{ url_for('static', filename='app.css') }}"
+    >
+
+    <style>
+        .audit-password-wrap {
+            position: relative;
+        }
+
+        .audit-password-wrap input {
+            width: 100%;
+            box-sizing: border-box;
+            padding-right: 46px;
+        }
+
+        .audit-password-toggle {
+            position: absolute;
+            right: 8px;
+            top: 50%;
+            transform: translateY(-50%);
+
+            width: 32px;
+            height: 32px;
+
+            display: flex;
+            align-items: center;
+            justify-content: center;
+
+            border: 0;
+            background: transparent;
+            padding: 0;
+
+            cursor: pointer;
+            color: #64748b;
+        }
+
+        .audit-password-toggle svg {
+            width: 20px;
+            height: 20px;
+        }
+
+        .audit-password-toggle:hover {
+            color: #334155;
+        }
+    </style>
+</head>
+
+<body>
+
+<div class="login">
+
+    <form
+        class="login-card"
+        method="post"
+        autocomplete="on"
+    >
+
+        <input
+            type="hidden"
+            name="_csrf"
+            value="{{ csrf_token }}"
+        >
+
+        <h1>Restricted audit</h1>
+
+        <p class="muted">
+            This page is deliberately not linked
+            from the normal school website.
+        </p>
+
+        {% if error %}
+            <div class="alert error">
+                {{ error }}
+            </div>
+        {% endif %}
+
+        <div class="field">
+
+            <label for="auditUsername">
+                Audit username
+            </label>
+
+            <input
+                id="auditUsername"
+                name="username"
+                autocomplete="username"
+                required
+            >
+
+        </div>
+
+        <div
+            class="field"
+            style="margin-top:12px"
+        >
+
+            <label for="auditPassword">
+                Audit password
+            </label>
+
+            <div class="audit-password-wrap">
+
+                <input
+                    id="auditPassword"
+                    name="password"
+                    type="password"
+                    autocomplete="current-password"
+                    required
+                >
+
+                <button
+                    type="button"
+                    id="auditPasswordToggle"
+                    class="audit-password-toggle"
+                    aria-label="Show password"
+                    title="Show password"
+                >
+
+                    <svg
+                        id="auditEyeOpen"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                    >
+                        <path
+                            d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12Z"
+                            stroke="currentColor"
+                            stroke-width="2"
+                        />
+
+                        <circle
+                            cx="12"
+                            cy="12"
+                            r="2.5"
+                            stroke="currentColor"
+                            stroke-width="2"
+                        />
+                    </svg>
+
+                    <svg
+                        id="auditEyeClosed"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        style="display:none"
+                    >
+                        <path
+                            d="M3 3l18 18"
+                            stroke="currentColor"
+                            stroke-width="2"
+                        />
+
+                        <path
+                            d="M2 12s3.5-6 10-6c1.7 0 3.2.4 4.5 1M22 12s-3.5 6-10 6c-1.7 0-3.2-.4-4.5-1"
+                            stroke="currentColor"
+                            stroke-width="2"
+                        />
+                    </svg>
+
+                </button>
+
+            </div>
+
+        </div>
+
+        <button
+            class="btn btn-primary"
+            style="
+                margin-top:14px;
+                width:100%
+            "
+            type="submit"
+        >
+            Open audit
+        </button>
+
+    </form>
+
+</div>
+
+<script>
+(function () {
+
+    const input =
+        document.getElementById(
+            'auditPassword'
+        );
+
+    const button =
+        document.getElementById(
+            'auditPasswordToggle'
+        );
+
+    const eyeOpen =
+        document.getElementById(
+            'auditEyeOpen'
+        );
+
+    const eyeClosed =
+        document.getElementById(
+            'auditEyeClosed'
+        );
+
+    if (
+        !input ||
+        !button ||
+        !eyeOpen ||
+        !eyeClosed
+    ) {
+        return;
+    }
+
+    button.addEventListener(
+        'click',
+        function () {
+
+            const showing =
+                input.type === 'text';
+
+            input.type =
+                showing
+                    ? 'password'
+                    : 'text';
+
+            eyeOpen.style.display =
+                showing
+                    ? 'block'
+                    : 'none';
+
+            eyeClosed.style.display =
+                showing
+                    ? 'none'
+                    : 'block';
+
+            button.setAttribute(
+                'aria-label',
+                showing
+                    ? 'Show password'
+                    : 'Hide password'
+            );
+
+            button.setAttribute(
+                'title',
+                showing
+                    ? 'Show password'
+                    : 'Hide password'
+            );
+        }
+    );
+
+})();
+</script>
+
+</body>
+</html>
+
+</body>
+</html>
