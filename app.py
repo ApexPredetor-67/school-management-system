@@ -9,17 +9,7 @@ from dotenv import load_dotenv
 from flask import Flask, abort, flash, jsonify, redirect, render_template, request, send_file, session, url_for, g
 from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.security import check_password_hash, generate_password_hash
-from sqlalchemy import (
-    func,
-    or_,
-    and_,
-    text,
-    cast,
-    Integer,
-    case
-)
-from sqlalchemy.orm import selectinload 
-import threading
+from sqlalchemy import func, or_, and_, text, cast, Integer, case
 from sqlalchemy.exc import IntegrityError
 
 try:
@@ -76,8 +66,6 @@ app.config.update(
     SSL_KEY_FILE=os.getenv('SSL_KEY_FILE',''),
     SSL_ADHOC=os.getenv('SSL_ADHOC','false').lower() in {'1','true','yes','on'},
 )
-app.config['MAX_CONTENT_LENGTH']=12*1024*1024
-app.config['SEND_FILE_MAX_AGE_DEFAULT']=86400
 # Small local SQLite tuning: fewer lock errors and better concurrent reads.
 if app.config['SQLALCHEMY_DATABASE_URI'].startswith('sqlite:///'):
     app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
@@ -91,8 +79,14 @@ if os.getenv('TRUST_PROXY_HEADERS','false').lower()=='true':
     app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
 db.init_app(app)
 
-_FEE_REMINDER_LOCK = threading.Lock()
-_FEE_REMINDER_LAST_RUN = 0.0
+
+def _request_cache():
+    """Return a tiny per-request cache without using global mutable state."""
+    cache = getattr(g, '_school_request_cache', None)
+    if cache is None:
+        cache = {}
+        setattr(g, '_school_request_cache', cache)
+    return cache
 
 
 def csv_values(name):
@@ -100,14 +94,6 @@ def csv_values(name):
 
 def client_ip():
     return request.remote_addr or 'unknown'
-
-
-def _request_cache():
-    cache = getattr(g, "_request_cache", None)
-    if cache is None:
-        cache = {}
-        g._request_cache = cache
-    return cache
 
 def ip_allowed(name):
     allowed = csv_values(name)
@@ -401,72 +387,54 @@ def normalize_section(value):
     raw=' '.join(str(value or '').strip().split()).upper()
     return re.sub(r'[^A-Z0-9]', '', raw)[:10]
 
+def parse_bool(value, default=False):
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return default
+    raw=str(value).strip().lower()
+    if raw in {'1','true','yes','on','working','present'}:
+        return True
+    if raw in {'0','false','no','off','holiday','non-working','nonworking'}:
+        return False
+    return default
+
+
+def release_inactive_account_username(username):
+    """Free a previously deleted/inactive username while preserving the person record.
+
+    Older builds soft-deactivated accounts, leaving the UNIQUE(username) constraint
+    occupied forever. Detaching the account from its person before deletion preserves
+    the student/teacher/parent record while making the username reusable.
+    """
+    normalized=(username or '').strip().lower()
+    if not normalized:
+        return False
+    acct=Account.query.filter(func.lower(Account.username)==normalized).first()
+    if not acct or acct.active:
+        return False
+    Student.query.filter_by(account_id=acct.id).update({Student.account_id: None}, synchronize_session=False)
+    Teacher.query.filter_by(account_id=acct.id).update({Teacher.account_id: None}, synchronize_session=False)
+    Parent.query.filter_by(account_id=acct.id).update({Parent.account_id: None}, synchronize_session=False)
+    db.session.delete(acct)
+    db.session.flush()
+    return True
+
 def student_order(query):
+    """Stable school ordering: class number -> section -> natural roll -> name.
+
+    Nonnumeric/legacy roll numbers are handled safely without a PostgreSQL cast
+    that can abort the entire query. Numeric rolls still sort naturally (1,2,10).
     """
-    Consistent school ordering:
-
-    1. Class
-    2. Section
-    3. Numeric roll number
-    4. Non-numeric roll number
-    5. Student name
-    6. Student ID
-
-    Numeric rolls are ordered naturally:
-    1, 2, 3, 10, 11
-
-    Legacy non-numeric rolls do not crash PostgreSQL.
-    """
-
     class_rank = case(
-        {
-            'NURSERY': 0,
-            'LKG': 1,
-            'UKG': 2,
-            **{
-                k: v + 2
-                for k, v in ROMAN_TO_INT.items()
-            }
-        },
+        {'NURSERY': 0, 'LKG': 1, 'UKG': 2, **{k:v+2 for k,v in ROMAN_TO_INT.items()}},
         value=func.upper(Student.class_name),
-        else_=99
-    )
-
-    roll_text = func.trim(
-        func.coalesce(Student.roll_number, '')
-    )
-
-    numeric_only = roll_text.op('~')(
-        '^[0-9]+$'
-    )
-
-    roll_num = case(
-        (
-            numeric_only,
-            cast(roll_text, Integer)
-        ),
-        else_=2147483647
-    )
-
-    return query.order_by(
-        class_rank,
-        func.upper(
-            func.coalesce(Student.class_name, '')
-        ),
-        func.upper(
-            func.coalesce(Student.section, '')
-        ),
-        roll_num,
-        roll_text,
-        func.upper(
-            func.coalesce(Student.name, '')
-        ),
-        Student.id
-    )
+        else_=99,
     )
     roll_text=func.trim(Student.roll_number)
-    roll_num=cast(func.nullif(roll_text, ''), Integer)
-    return query.order_by(class_rank, Student.class_name, Student.section, roll_num, roll_text, Student.name)
+    numeric_only = roll_text.op('~')('^[0-9]+$')
+    roll_num = case((numeric_only, cast(roll_text, Integer)), else_=2147483647)
+    return query.order_by(class_rank, Student.class_name, Student.section, roll_num, roll_text, Student.name, Student.id)
 
 def language_label(code):
     return {'telugu':'Telugu','hindi':'Hindi','sanskrit':'Sanskrit'}.get(str(code or '').lower(), str(code or '').title())
@@ -644,8 +612,8 @@ def weekly_default_is_working(day):
 
 
 def get_school_clock_override():
-    _configured_clock_time()
-    return _request_cache().get('clock_override_raw') or None
+    row = db.session.get(SchoolClock, 1)
+    return (row.override_time or '').strip() if row else None
 
 
 def json_error(message, status=400):
@@ -666,9 +634,7 @@ def attendance_status_for_time(value=None):
     if t < absent_after: return 'late'
     return 'closed'
 
-def school_year_bounds():
-    d=school_date(); y=d.year if d.month>=4 else d.year-1
-    return date(y,4,1), date(y+1,3,31)
+def school_year_bounds(): return date(school_date().year if school_date().month>=4 else school_date().year-1,4,1), date(school_date().year+1 if school_date().month>=4 else school_date().year,3,31)
 
 def allowed_students_for_account(acct):
     if acct.role=='admin': return Student.query.filter_by(active=True)
@@ -930,8 +896,11 @@ def admin_register_save():
         flash('2ND LANGUAGE IS REQUIRED FOR CLASSES IX–X.','error'); return render_template('register_student.html',class_options=class_list(),form=d)
     if Student.query.filter_by(admission_number=adm).first():
         flash('ADMISSION NUMBER ALREADY EXISTS.','error'); return render_template('register_student.html',class_options=class_list(),form=d)
-    if Account.query.filter(func.lower(Account.username)==user.lower()).first():
+    existing_account=Account.query.filter(func.lower(Account.username)==user.lower()).first()
+    if existing_account and existing_account.active:
         flash('USERNAME ALREADY EXISTS.','error'); return render_template('register_student.html',class_options=class_list(),form=d)
+    if existing_account and not existing_account.active:
+        release_inactive_account_username(user)
     session['pending_student_registration']={'name':name,'admission_number':adm,'roll_number':roll,'class_name':cls,'section':sec,'username':user,'password_hash':generate_password_hash(password),'second_language':second,'third_language':third}
     if not face_available():
         acct=Account(username=user,password_hash=generate_password_hash(password),role='student',display_name=name,must_change_password=True)
@@ -969,8 +938,11 @@ def register_student_face_complete():
         return jsonify({'error':f'Only {len(encs)} valid face frames were detected. Capture at least 8 good frames.'}),400
     if Student.query.filter_by(admission_number=pending['admission_number']).first():
         session.pop('pending_student_registration',None); return jsonify({'error':'Admission number already exists.'}),409
-    if Account.query.filter(func.lower(Account.username)==pending['username'].lower()).first():
+    existing_account=Account.query.filter(func.lower(Account.username)==pending['username'].lower()).first()
+    if existing_account and existing_account.active:
         session.pop('pending_student_registration',None); return jsonify({'error':'Username already exists.'}),409
+    if existing_account and not existing_account.active:
+        release_inactive_account_username(pending['username'])
     acct=Account(username=pending['username'],password_hash=pending['password_hash'],role='student',display_name=pending['name'],must_change_password=True)
     db.session.add(acct); db.session.flush()
     s=Student(name=pending['name'],admission_number=pending['admission_number'],roll_number=pending['roll_number'],class_name=pending['class_name'],section=pending['section'],second_language=pending['second_language'],third_language=pending['third_language'],account_id=acct.id,face_encoding_json=json.dumps(encs),face_trained=True)
@@ -1022,7 +994,7 @@ def admin_teachers():
         if sec: q=q.filter(TeacherAssignment.section.ilike(sec))
         q=q.distinct()
     total=q.count(); teachers=q.order_by(Teacher.name).offset((page-1)*per_page).limit(per_page).all()
-    tids=[t.id for t in teachers]; assignment_counts={tid:c for tid,c in db.session.query(TeacherAssignment.teacher_id,func.count(TeacherAssignment.id)).filter(TeacherAssignment.teacher_id.in_(tids)).group_by(TeacherAssignment.teacher_id).all()} if tids else {}
+    assignment_counts={t.id:TeacherAssignment.query.filter_by(teacher_id=t.id).count() for t in teachers}
     class_options=[x[0] for x in db.session.query(TeacherAssignment.class_name).distinct().order_by(TeacherAssignment.class_name).all()]
     section_options=[x[0] for x in db.session.query(TeacherAssignment.section).filter(TeacherAssignment.section!='').distinct().order_by(TeacherAssignment.section).all()]
     return render_template('teachers.html',teachers=teachers,assignment_counts=assignment_counts,search=search,class_name=cls,section=sec,page=page,per_page=per_page,total=total,class_options=class_options,section_options=section_options)
@@ -1318,16 +1290,11 @@ def save_mark():
         return jsonify({'error':'Invalid student or exam.'}),400
     subj=Subject.query.filter_by(code=d.get('subject_code','')).first()
     val=float(d['marks']) if d.get('marks') not in ('',None) else None
-    acct=current_account(); student=Student.query.filter_by(id=sid,active=True).first()
-    if not student or not exam or not subj or acct.role!='teacher': abort(403)
-    teacher=Teacher.query.filter_by(account_id=acct.id,active=True).first()
-    if not teacher: abort(403)
-    class_assigned=TeacherAssignment.query.filter_by(teacher_id=teacher.id,class_name=student.class_name,section=student.section).first() is not None
-    subject_assigned=TeacherSubjectAssignment.query.filter_by(teacher_id=teacher.id,subject_code=subj.code).first() is not None
-    if not class_assigned and not subject_assigned:
-        return jsonify({'error':'You are not assigned to this class/section or subject.'}),403
-    if subject_assigned and not class_assigned and subj.code not in {c for c,_ in subject_options_for_class(student.class_name,student.second_language,student.third_language)}:
-        return jsonify({'error':'This subject is not offered for the selected student.'}),403
+    student=allowed_students_for_account(current_account()).filter_by(id=sid).first()
+    if not student or not exam or not subj: abort(403)
+    teacher=Teacher.query.filter_by(account_id=current_account().id,active=True).first()
+    if not teacher_can_edit_mark(teacher, student, subj):
+        return jsonify({'error':'You are not assigned to enter this subject for this class/section.'}),403
     if val is not None and (val<0 or val>exam.max_marks): return jsonify({'error':f'Marks must be between 0 and {exam.max_marks}.'}),400
     m=Mark.query.filter_by(student_id=sid,subject_code=subj.code,exam_id=exam.id).first() or Mark(student_id=sid,subject_code=subj.code,exam_id=exam.id,max_marks=exam.max_marks)
     if m.locked: return jsonify({'error':'This mark is locked.'}),409
@@ -1338,34 +1305,70 @@ def save_mark():
 def academics_import():
     upload=request.files.get('file')
     if not upload or not upload.filename.lower().endswith(('.xlsx','.xlsm')):
-        flash('Upload an Excel workbook (.xlsx).','error'); return redirect(url_for('academics'))
+        flash('Upload an Excel workbook (.xlsx/.xlsm).','error'); return redirect(url_for('academics'))
     try:
         from openpyxl import load_workbook
         wb=load_workbook(upload,read_only=True,data_only=True)
         ws=wb.active
         rows=list(ws.iter_rows(values_only=True))
         if len(rows)<2: raise ValueError('The workbook is empty.')
-        headers=[str(x or '').strip().lower() for x in rows[0]]
+        headers=[str(x or '').strip().lower().replace(' ','_') for x in rows[0]]
+        aliases={
+            'admission':'admission','admission_number':'admission','student_admission_number':'admission',
+            'exam':'exam','exam_name':'exam','subject':'subject','subject_name':'subject',
+            'marks':'marks','mark':'marks','score':'marks'
+        }
+        normalized=[aliases.get(h,h) for h in headers]
         required={'admission','exam','subject','marks'}
-        if not required.issubset(set(headers)): raise ValueError('Required columns: Admission, Exam, Subject, Marks')
-        idx={h:i for i,h in enumerate(headers)}; changed=0
-        for row in rows[1:]:
-            admission=str(row[idx['admission']] or '').strip(); exam_name=str(row[idx['exam']] or '').strip(); subject_name=str(row[idx['subject']] or '').strip(); raw=row[idx['marks']]
-            if not admission or not exam_name or not subject_name or raw in (None,''): continue
-            student=Student.query.filter_by(admission_number=admission,active=True).first(); exam=Exam.query.filter(func.lower(Exam.name)==exam_name.lower()).first(); subject=Subject.query.filter(func.lower(Subject.name)==subject_name.lower()).first()
-            if not student or not exam or not subject: continue
-            if current_account().role=='teacher':
-                teacher=Teacher.query.filter_by(account_id=current_account().id,active=True).first()
-                if not teacher or not teacher_can_edit_mark(teacher,student,subject): continue
-            value=float(raw)
-            if value<0 or value>exam.max_marks: continue
-            mark=Mark.query.filter_by(student_id=student.id,subject_code=subject.code,exam_id=exam.id).first() or Mark(student_id=student.id,subject_code=subject.code,exam_id=exam.id,max_marks=exam.max_marks)
-            if mark.locked: continue
-            mark.marks=value; mark.max_marks=exam.max_marks; mark.updated_by=current_account().username; db.session.add(mark); changed += 1
-        log_audit('marks_excel_import','Academics',extra={'updated':changed,'filename':upload.filename}); db.session.commit(); flash(f'Imported {changed} mark(s).','success')
+        if not required.issubset(set(normalized)):
+            raise ValueError('Required columns: Admission, Exam, Subject, Marks')
+        idx={h:i for i,h in enumerate(normalized)}
+        students_by_admission={s.admission_number.strip().upper():s for s in Student.query.filter_by(active=True).all()}
+        exams_by_name={e.name.strip().lower():e for e in Exam.query.filter_by(active=True).all()}
+        subjects_by_name={s.name.strip().lower():s for s in Subject.query.filter_by(active=True).all()}
+        acct=current_account(); teacher=Teacher.query.filter_by(account_id=acct.id,active=True).first() if acct.role=='teacher' else None
+        class_pairs=set((a.class_name,a.section) for a in TeacherAssignment.query.filter_by(teacher_id=teacher.id).all()) if teacher else set()
+        teacher_subjects=set(a.subject_code for a in TeacherSubjectAssignment.query.filter_by(teacher_id=teacher.id).all()) if teacher else set()
+        changed=0; skipped=0
+        for raw_row in rows[1:]:
+            admission=str(raw_row[idx['admission']] or '').strip().upper(); exam_name=str(raw_row[idx['exam']] or '').strip().lower(); subject_name=str(raw_row[idx['subject']] or '').strip().lower(); raw=raw_row[idx['marks']]
+            if not admission or not exam_name or not subject_name or raw in (None,''):
+                skipped += 1; continue
+            student=students_by_admission.get(admission); exam=exams_by_name.get(exam_name); subject=subjects_by_name.get(subject_name)
+            if not student or not exam or not subject:
+                skipped += 1; continue
+            if acct.role=='teacher' and not (
+                (student.class_name,student.section) in class_pairs or subject.code in teacher_subjects
+            ):
+                skipped += 1; continue
+            try:
+                value=float(raw)
+            except (TypeError,ValueError):
+                skipped += 1; continue
+            if value<0 or value>exam.max_marks:
+                skipped += 1; continue
+            mark=Mark.query.filter_by(student_id=student.id,subject_code=subject.code,exam_id=exam.id).first()
+            if mark is None:
+                mark=Mark(student_id=student.id,subject_code=subject.code,exam_id=exam.id,max_marks=exam.max_marks)
+                db.session.add(mark)
+            if mark.locked:
+                skipped += 1; continue
+            mark.marks=value; mark.max_marks=exam.max_marks; mark.updated_by=acct.username; changed += 1
+        log_audit('marks_excel_import','Academics',extra={'updated':changed,'skipped':skipped,'filename':upload.filename}); db.session.commit()
+        flash(f'Imported {changed} mark(s). Skipped {skipped} invalid, unknown, unauthorized or locked row(s).','success')
     except Exception as exc:
-        db.session.rollback(); flash(f'Could not import workbook: {exc}','error')
+        db.session.rollback(); app.logger.exception('Excel marks import failed'); flash(f'Could not import workbook: {exc}','error')
     return redirect(url_for('academics'))
+
+@app.get('/academics/import-template.xlsx')
+@staff_required
+def academics_import_template():
+    rows=[
+        {'Admission':'STUDENT-001','Exam':'PT-1','Subject':'Mathematics','Marks':35},
+        {'Admission':'STUDENT-001','Exam':'Final Examination','Subject':'Mathematics','Marks':72},
+    ]
+    buf=build_xlsx(rows,'Marks Import')
+    return send_file(buf,as_attachment=True,download_name='marks_import_template.xlsx',mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
 
 @app.context_processor
 def template_helpers():
@@ -1375,7 +1378,7 @@ def template_helpers():
         'school_date': school_date,
         'school_time': school_time,
         'school_now': school_now,
-        'clock_override_time': get_school_clock_override(),
+        'clock_override_time': (db.session.get(SchoolClock,1).override_time if (db.session.get(SchoolClock,1) is not None) else None),
         'grade_for_percent': grade_for_percent,
         'current_account': current_account,
         'profile_picture_url': profile_picture_url,
@@ -1388,14 +1391,13 @@ def template_helpers():
 def results():
     acct=current_account(); students=student_order(allowed_students_for_account(acct)).limit(1000).all(); exams=Exam.query.order_by(Exam.order_index).all(); ids=[s.id for s in students]
     marks=Mark.query.filter(Mark.student_id.in_(ids)).all() if ids else []
-    by_student_exam={}
-    for m in marks:
-        got,mx=by_student_exam.get((m.student_id,m.exam_id),(0.0,0)); by_student_exam[(m.student_id,m.exam_id)]=(got+float(m.marks or 0),mx+int(m.max_marks or 0))
+    by_student={}
+    for m in marks: by_student.setdefault(m.student_id,[]).append(m)
     rows=[]
     for s in students:
-        total=0; max_total=0; by_exam=[]
+        total=0; max_total=0; by_exam=[]; smarks=by_student.get(s.id,[])
         for e in exams:
-            got,mx=by_student_exam.get((s.id,e.id),(0.0,0)); pct=round(got/mx*100,2) if mx else 0
+            ms=[m for m in smarks if m.exam_id==e.id]; got=sum(m.marks or 0 for m in ms); mx=sum(m.max_marks for m in ms); pct=round(got/mx*100,2) if mx else 0
             total += got; max_total += mx; by_exam.append((e.name,got,mx,pct,grade_for_percent(pct)))
         pct=round(total/max_total*100,2) if max_total else 0
         rows.append({'student':s,'by_exam':by_exam,'percentage':pct,'grade':grade_for_percent(pct),'result':pass_fail_for_percent(pct)})
@@ -1659,28 +1661,35 @@ def admin_accounts():
             flash('Name, username, role and 8+ character temporary password are required. Student accounts are created only through registration.','error')
         elif role=='parent' and not child_ids:
             flash('A parent account must be linked to at least one student.','error')
-        elif Account.query.filter(func.lower(Account.username)==username.lower()).first():
-            flash('Username already exists.','error')
         else:
-            acct=Account(username=username,password_hash=generate_password_hash(password),role=role,display_name=name,must_change_password=True)
-            db.session.add(acct); db.session.flush()
-            if role=='parent':
-                parent=Parent(name=name,account_id=acct.id,phone=request.form.get('phone','').strip(),email=request.form.get('email','').strip())
-                db.session.add(parent); db.session.flush()
-                for sid in child_ids: db.session.add(ParentStudent(parent_id=parent.id,student_id=sid))
-            elif role=='teacher':
-                db.session.add(Teacher(name=name,phone=request.form.get('phone','').strip(),email=request.form.get('email','').strip(),account_id=acct.id))
-            log_audit('account_created','Account',acct.id,{'role':role,'children':child_ids}); db.session.commit(); flash(f'{role.title()} account created.','success')
+            existing=Account.query.filter(func.lower(Account.username)==username.lower()).first()
+            if existing and existing.active:
+                flash('Username already exists.','error')
+            else:
+                if existing and not existing.active:
+                    release_inactive_account_username(username)
+                acct=Account(username=username,password_hash=generate_password_hash(password),role=role,display_name=name,must_change_password=True)
+                db.session.add(acct); db.session.flush()
+                if role=='parent':
+                    parent=Parent.query.filter(Parent.account_id.is_(None), func.lower(Parent.name)==name.lower()).order_by(Parent.id.desc()).first()
+                    if parent is None:
+                        parent=Parent(name=name,account_id=acct.id,phone=request.form.get('phone','').strip(),email=request.form.get('email','').strip())
+                        db.session.add(parent); db.session.flush()
+                    else:
+                        parent.account_id=acct.id; parent.name=name; parent.phone=request.form.get('phone','').strip(); parent.email=request.form.get('email','').strip()
+                        db.session.query(ParentStudent).filter_by(parent_id=parent.id).delete(synchronize_session=False)
+                    for sid in child_ids: db.session.add(ParentStudent(parent_id=parent.id,student_id=sid))
+                elif role=='teacher':
+                    db.session.add(Teacher(name=name,phone=request.form.get('phone','').strip(),email=request.form.get('email','').strip(),account_id=acct.id))
+                log_audit('account_created','Account',acct.id,{'role':role,'children':child_ids}); db.session.commit(); flash(f'{role.title()} account created.','success')
 
     role=request.args.get('role','').lower(); search=request.args.get('q','').strip(); page=max(1,request.args.get('page',1,type=int)); per_page=25
-    # Admins
     admin_items=[]; admin_count=0
     if not role or role=='admin':
         aq=Account.query.filter_by(role='admin',active=True)
         if search: aq=aq.filter(or_(Account.username.ilike(f'%{search}%'),Account.display_name.ilike(f'%{search}%')))
         admin_count=aq.count(); admin_items=aq.order_by(Account.display_name).offset((page-1)*per_page).limit(per_page).all()
 
-    # Teachers, with assignment strings loaded for only the current page.
     teacher_items=[]; teacher_count=0; assignment_map={}; teacher_accounts={}
     if not role or role=='teacher':
         tq=Teacher.query.filter_by(active=True)
@@ -1693,7 +1702,6 @@ def admin_accounts():
             assigns=TeacherAssignment.query.filter(TeacherAssignment.teacher_id.in_(tids)).order_by(TeacherAssignment.class_name,TeacherAssignment.section).all()
             for a in assigns: assignment_map.setdefault(a.teacher_id,[]).append(f'{a.class_name}-{a.section}' if a.section else a.class_name)
 
-    # Students are sourced from Student, not Account, so every registered student is visible even if an old record is missing account_id.
     student_items=[]; student_count=0; parent_count_by_student={}
     if not role or role=='student':
         sq=Student.query.filter_by(active=True)
@@ -1703,13 +1711,11 @@ def admin_accounts():
         sids=[st.id for st in student_items]
         if sids:
             links=ParentStudent.query.filter(ParentStudent.student_id.in_(sids)).all()
-            for link in links:
-                parent_count_by_student[link.student_id]=parent_count_by_student.get(link.student_id,0)+1
+            for link in links: parent_count_by_student[link.student_id]=parent_count_by_student.get(link.student_id,0)+1
 
-    # Parents are sourced from Parent so they are always visible and their linked children remain explicit.
     parent_items=[]; parent_count=0; child_map={}
     if not role or role=='parent':
-        pq=Parent.query.join(Account,Parent.account_id==Account.id).filter(Account.active.is_(True))
+        pq=Parent.query.outerjoin(Account,Parent.account_id==Account.id).filter(or_(Account.id.is_(None),Account.active.is_(True)))
         if search:
             like=f'%{search}%'; pq=pq.filter(or_(Parent.name.ilike(like),Account.username.ilike(like),Parent.phone.ilike(like),Parent.email.ilike(like)))
         parent_count=pq.count(); parent_items=pq.order_by(Parent.name).offset((page-1)*per_page).limit(per_page).all()
@@ -1849,9 +1855,13 @@ def edit_student(sid):
 @admin_required
 def delete_student(sid):
     student=db.session.get(Student,sid) or abort(404); student.active=False
-    if student.account: student.account.active=False
-    log_audit('student_deactivated','Student',sid,{'admission_number':student.admission_number}); db.session.commit()
-    flash('Student deactivated. Historical records were preserved.','success'); return redirect(url_for('admin_students'))
+    acct=student.account
+    if acct:
+        student.account_id=None
+        db.session.delete(acct)
+    log_audit('student_deactivated','Student',sid,{'admission_number':student.admission_number,'account_deleted':bool(acct)})
+    db.session.commit()
+    flash('Student account deleted; student records and history were preserved. The username can be reused.','success'); return redirect(url_for('admin_students'))
 
 @app.route('/admin/teachers/<int:tid>/edit', methods=['GET','POST'])
 @admin_required
@@ -1860,6 +1870,8 @@ def edit_teacher(tid):
     if request.method=='POST':
         name=normalize_school_name(request.form.get('name')); username=(request.form.get('username') or '').strip(); phone=request.form.get('phone','').strip(); email=request.form.get('email','').strip(); active=request.form.get('active')=='1'
         other=Account.query.filter(func.lower(Account.username)==username.lower(), Account.id != (account.id if account else -1)).first()
+        if other and not other.active:
+            release_inactive_account_username(username); other=None
         if not name or not username or other:
             return render_template('person_edit.html',kind='Teacher',person=teacher,account=account,error='Valid name and unique username are required.'),400
         if not account:
@@ -1875,8 +1887,11 @@ def edit_teacher(tid):
 @admin_required
 def delete_teacher(tid):
     teacher=db.session.get(Teacher,tid) or abort(404); teacher.active=False
-    if teacher.account: teacher.account.active=False
-    log_audit('teacher_deactivated','Teacher',tid); db.session.commit(); flash('Teacher deactivated. Existing academic records were preserved.','success')
+    acct=teacher.account
+    if acct:
+        teacher.account_id=None
+        db.session.delete(acct)
+    log_audit('teacher_deactivated','Teacher',tid,{'account_deleted':bool(acct)}); db.session.commit(); flash('Teacher account deleted; teacher records were preserved. The username can be reused.','success')
     return redirect(url_for('admin_teachers'))
 
 @app.route('/admin/parents/<int:pid>/edit', methods=['GET','POST'])
@@ -1888,6 +1903,8 @@ def edit_parent(pid):
         admissions=[x.strip().upper() for x in (request.form.get('child_admissions') or '').replace('\n',',').split(',') if x.strip()]
         students=Student.query.filter(Student.admission_number.in_(admissions),Student.active.is_(True)).all()
         other=Account.query.filter(func.lower(Account.username)==username.lower(), Account.id != (account.id if account else -1)).first()
+        if other and not other.active:
+            release_inactive_account_username(username); other=None
         if not name or not username or other or not students:
             return render_template('parent_edit.html',parent=parent,account=account,linked_admissions=[s.admission_number for s in students],error='Name, unique username and at least one active child admission number are required.'),400
         if not account:
@@ -1906,8 +1923,11 @@ def edit_parent(pid):
 @admin_required
 def delete_parent(pid):
     parent=db.session.get(Parent,pid) or abort(404)
-    if parent.account: parent.account.active=False
-    log_audit('parent_deactivated','Parent',pid); db.session.commit(); flash('Parent deactivated. Child links were preserved.','success')
+    acct=parent.account
+    if acct:
+        parent.account_id=None
+        db.session.delete(acct)
+    log_audit('parent_deactivated','Parent',pid,{'account_deleted':bool(acct)}); db.session.commit(); flash('Parent account deleted; parent profile and child links were preserved. The username can be reused.','success')
     return redirect(url_for('admin_accounts',role='parent'))
 
 @app.route('/admin/assignments/<int:aid>/edit', methods=['GET','POST'])
@@ -1935,9 +1955,24 @@ def publish_results():
     try: exam_id=int(request.form.get('exam_id'))
     except (TypeError,ValueError): return redirect(url_for('results'))
     exam=db.session.get(Exam,exam_id) or abort(404); cls=normalize_class(request.form.get('class_name')); sec=normalize_section(request.form.get('section'))
+    if not exam.is_final:
+        flash('Only the final examination can be published to students and parents.','error'); return redirect(url_for('results'))
     if not cls: flash('A valid class is required.','error'); return redirect(url_for('results'))
     row=ResultPublication.query.filter_by(exam_id=exam.id,class_name=cls,section=sec).first() or ResultPublication(exam_id=exam.id,class_name=cls,section=sec)
     db.session.add(row); row.published=True; row.published_at=datetime.utcnow(); row.published_by=current_account().username; log_audit('results_published','ResultPublication',row.id,{'exam':exam.name,'class_name':cls,'section':sec}); db.session.commit(); flash(f'{exam.name} results published for {cls}{("-"+sec) if sec else ""}.','success'); return redirect(url_for('results'))
+
+@app.post('/admin/results/unpublish')
+@admin_required
+def unpublish_results():
+    try: exam_id=int(request.form.get('exam_id'))
+    except (TypeError,ValueError): return redirect(url_for('results'))
+    exam=db.session.get(Exam,exam_id) or abort(404); cls=normalize_class(request.form.get('class_name')); sec=normalize_section(request.form.get('section'))
+    if not exam.is_final:
+        flash('Only the final examination publication is managed here.','error'); return redirect(url_for('results'))
+    row=ResultPublication.query.filter_by(exam_id=exam.id,class_name=cls,section=sec).first()
+    if row:
+        row.published=False; row.published_at=None; row.published_by=current_account().username; log_audit('results_unpublished','ResultPublication',row.id,{'exam':exam.name,'class_name':cls,'section':sec}); db.session.commit()
+    flash(f'{exam.name} results unpublished for {cls}{("-"+sec) if sec else ""}.','info'); return redirect(url_for('results'))
 
 @app.route('/admin/test-clock', methods=['GET','POST'])
 @admin_required
@@ -1957,12 +1992,8 @@ def test_clock():
 
 # Fees are deliberately manual: the system never creates invoices automatically.
 def current_academic_session():
-    cache=_request_cache()
-    if 'academic_session' in cache: return cache['academic_session']
     setting=SchoolSetting.query.filter_by(key='academic_session').first()
-    value=(setting.value.strip() if setting and setting.value else os.getenv('ACADEMIC_SESSION','2026-27'))
-    cache['academic_session']=value
-    return value
+    return (setting.value.strip() if setting and setting.value else os.getenv('ACADEMIC_SESSION','2026-27'))
 
 def fee_status_for_student(student, session_name=None):
     session_name=session_name or current_academic_session(); row=fee_structure_for_student(student,session_name); result=[]
@@ -1976,41 +2007,24 @@ def fee_status_for_student(student, session_name=None):
     return result
 
 def maybe_create_fee_reminders(student_ids=None, session_name=None):
-    global _FEE_REMINDER_LAST_RUN
-    now_mono=time_module.monotonic()
-    if not student_ids:
-        with _FEE_REMINDER_LOCK:
-            if now_mono-_FEE_REMINDER_LAST_RUN < 120: return 0
-            _FEE_REMINDER_LAST_RUN=now_mono
-    session_name=session_name or current_academic_session(); ids=[int(x) for x in (student_ids or [])]
-    q=(Student.query.filter(Student.active.is_(True)).join(ParentStudent,ParentStudent.student_id==Student.id).distinct())
-    if ids: q=q.filter(Student.id.in_(ids))
-    students=student_order(q).all()
-    if not students: return 0
-    sids=[x.id for x in students]
-    links=ParentStudent.query.filter(ParentStudent.student_id.in_(sids)).all(); parents_by_student={}
-    for link in links: parents_by_student.setdefault(link.student_id,[]).append(link.parent_id)
-    structures={r.class_group:r for r in FeeStructure.query.filter_by(academic_session=session_name).all()}
-    windows={w.term_key:w for w in FeePaymentWindow.query.filter_by(academic_session=session_name).all()}
-    invs=FeeInvoice.query.options(selectinload(FeeInvoice.payments)).filter(FeeInvoice.student_id.in_(sids)).filter(or_(FeeInvoice.academic_session==session_name,FeeInvoice.academic_session.is_(None))).all()
-    invoices_by_student={}
-    for inv in invs: invoices_by_student.setdefault(inv.student_id,[]).append(inv)
-    today=school_date(); created=0
+    # Dashboard pages can call this helper more than once; never duplicate work
+    # inside the same request.
+    cache_key=('fee_reminders', tuple(sorted(int(x) for x in (student_ids or []))), session_name or '')
+    seen=getattr(g,'fee_reminder_checks',set())
+    if cache_key in seen:
+        return 0
+    seen.add(cache_key); g.fee_reminder_checks=seen
+    session_name=session_name or current_academic_session(); ids=list(student_ids or [])
+    students=Student.query.filter(Student.active.is_(True),Student.id.in_(ids)).all() if ids else Student.query.filter(Student.active.is_(True)).all(); windows={w.term_key:w for w in FeePaymentWindow.query.filter_by(academic_session=session_name).all()}; today=school_date(); created=0
     for st in students:
-        parent_ids=parents_by_student.get(st.id,[]); structure=structures.get(fee_group_for_student(st))
-        if not parent_ids or not structure: continue
-        student_invs=invoices_by_student.get(st.id,[])
-        for term_key,label in FEE_TERM_LABELS:
-            amount=fee_term_amount(structure,term_key); w=windows.get(term_key)
-            if amount<=0 or not w or today<w.fine_from: continue
-            title=f'School Fee {session_name} • {label}'; matching=[x for x in student_invs if x.title==title]
-            paid=sum(sum(float(p.amount or 0) for p in inv.payments or []) for inv in matching)
-            if matching and paid>=amount: continue
-            state='partial' if paid>0 else 'unpaid'; reminder_title=f'Fee reminder • {st.admission_number} • {term_key}'
-            existing_titles={(a.parent_id,a.title) for a in Announcement.query.filter(Announcement.parent_id.in_(parent_ids),Announcement.title==reminder_title).all()}
-            for parent_id in parent_ids:
-                if (parent_id,reminder_title) in existing_titles: continue
-                db.session.add(Announcement(title=reminder_title,message=f'Fee reminder for {st.name}: {label} payment of ₹{amount:,.0f} is still {state}. Please contact the school office for payment verification.',audience='parents',published=True,created_by='system',published_at=datetime.utcnow(),parent_id=parent_id)); created+=1
+        if not ParentStudent.query.filter_by(student_id=st.id).first(): continue
+        for item in fee_status_for_student(st,session_name):
+            w=windows.get(item['term_key'])
+            if not w or today < w.fine_from or item['state']=='paid': continue
+            for link in ParentStudent.query.filter_by(student_id=st.id).all():
+                title=f'Fee reminder • {st.admission_number} • {item["term_key"]}'
+                if Announcement.query.filter_by(parent_id=link.parent_id,title=title).first(): continue
+                db.session.add(Announcement(title=title,message=f'Fee reminder for {st.name}: {item["term_label"]} payment of ₹{item["amount"]:,.0f} is still {item["state"]}. Please contact the school office for payment verification.',audience='parents',published=True,created_by='system',published_at=datetime.utcnow(),parent_id=link.parent_id)); created+=1
     if created: db.session.commit()
     return created
 
@@ -2135,8 +2149,20 @@ def calendar_set():
     data=request.get_json(silent=True) or {}; raw=str(data.get('date') or '')
     try: day=datetime.strptime(raw,'%Y-%m-%d').date()
     except ValueError: return jsonify({'error':'Valid date is required'}),400
-    row=SchoolCalendar.query.filter_by(date=day).first() or SchoolCalendar(date=day)
-    row.is_working=bool(data.get('is_working')); row.reason=(data.get('reason') or '').strip()[:255] or None; db.session.add(row); db.session.flush(); log_audit('calendar_update','SchoolCalendar',row.id,{'date':day.isoformat(),'is_working':row.is_working,'reason':row.reason}); db.session.commit(); return jsonify({'message':'Calendar updated'})
+    row=SchoolCalendar.query.filter_by(date=day).first()
+    if row is None:
+        row=SchoolCalendar(date=day)
+        db.session.add(row)
+    row.is_working=parse_bool(data.get('is_working'), True)
+    row.reason=(data.get('reason') or '').strip()[:255] or None
+    now_utc=datetime.utcnow()
+    if not row.created_at: row.created_at=now_utc
+    row.updated_at=now_utc
+    try:
+        db.session.flush(); log_audit('calendar_update','SchoolCalendar',row.id,{'date':day.isoformat(),'is_working':row.is_working,'reason':row.reason}); db.session.commit()
+    except IntegrityError:
+        db.session.rollback(); return jsonify({'error':'Calendar update conflicted with another request. Refresh and try again.'}),409
+    return jsonify({'message':'Calendar updated','date':day.isoformat(),'is_working':row.is_working,'reason':row.reason or ''})
 
 @app.post('/api/calendar/reset')
 @admin_required
@@ -2152,10 +2178,10 @@ def calendar_reset():
 @app.post('/api/calendar/bulk')
 @admin_required
 def calendar_bulk():
-    data=request.get_json(silent=True) or {}; dates=data.get('dates') or []; is_working=bool(data.get('is_working')); reason=(data.get('reason') or '').strip()[:255] or None; changed=0
+    data=request.get_json(silent=True) or {}; dates=data.get('dates') or []; is_working=parse_bool(data.get('is_working'), True); reason=(data.get('reason') or '').strip()[:255] or None; changed=0
     try:
         for raw in dates:
-            day=datetime.strptime(str(raw),'%Y-%m-%d').date(); row=SchoolCalendar.query.filter_by(date=day).first() or SchoolCalendar(date=day); row.is_working=is_working; row.reason=reason; db.session.add(row); changed+=1
+            day=datetime.strptime(str(raw),'%Y-%m-%d').date(); row=SchoolCalendar.query.filter_by(date=day).first() or SchoolCalendar(date=day); row.is_working=is_working; row.reason=reason; row.updated_at=datetime.utcnow(); db.session.add(row); changed+=1
         log_audit('calendar_bulk_update','SchoolCalendar',extra={'changed':changed,'is_working':is_working,'reason':reason}); db.session.commit()
     except (TypeError,ValueError): db.session.rollback(); return jsonify({'error':'Every date must use YYYY-MM-DD'}),400
     return jsonify({'message':f'Updated {changed} calendar date(s)'})
@@ -2179,7 +2205,7 @@ def calendar_import_apply():
     rows=(request.get_json(silent=True) or {}).get('dates') or []; changed=0
     try:
         for item in rows:
-            day=datetime.strptime(str(item.get('date') or ''),'%Y-%m-%d').date(); row=SchoolCalendar.query.filter_by(date=day).first() or SchoolCalendar(date=day); row.is_working=bool(item.get('is_working')); row.reason=(item.get('reason') or '').strip()[:255] or None; db.session.add(row); changed+=1
+            day=datetime.strptime(str(item.get('date') or ''),'%Y-%m-%d').date(); row=SchoolCalendar.query.filter_by(date=day).first() or SchoolCalendar(date=day); row.is_working=parse_bool(item.get('is_working'), True); row.reason=(item.get('reason') or '').strip()[:255] or None; row.updated_at=datetime.utcnow(); db.session.add(row); changed+=1
         log_audit('calendar_import','SchoolCalendar',extra={'changed':changed}); db.session.commit()
     except (TypeError,ValueError): db.session.rollback(); return jsonify({'error':'One or more detected calendar dates are invalid.'}),400
     return jsonify({'message':f'Applied {changed} calendar date(s)'})
