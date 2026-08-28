@@ -3,45 +3,100 @@
 {% block header %}Results & Analysis{% endblock %}
 {% block content %}
 <div class="hero-row">
-  <div class="hero"><div class="eyebrow">Academics</div><h1>Results & Analysis</h1><p>Automatic totals, percentages, grades and controlled publishing.</p></div>
-  <div class="actions no-print"><button class="btn btn-light" onclick="window.print()">Print</button><a class="btn btn-light" href="{{url_for('results_xlsx')}}">Excel</a><a class="btn btn-light" href="{{url_for('results_pdf')}}">PDF</a></div>
+  <div class="hero">
+    <div class="eyebrow">Academics</div>
+    <h1>Results & Analysis</h1>
+    <p>Automatic totals, percentages and grades. Marks entered by teachers are visible immediately to the relevant student and parent.</p>
+  </div>
+  <div class="actions no-print">
+    <button class="btn btn-light" onclick="window.print()">Print</button>
+    <a class="btn btn-light" href="{{ url_for('results_xlsx') }}">Excel</a>
+    <a class="btn btn-light" href="{{ url_for('results_pdf') }}">PDF</a>
+  </div>
 </div>
+
 <div class="card" style="margin-top:18px">
-  <div class="table-wrap"><table>
-    <thead><tr><th>Student</th>{% for e in exams %}<th>{{e.name}}</th>{% endfor %}<th>Overall</th><th>Grade</th><th>Result</th><th>Report</th></tr></thead>
-    <tbody>
-    {% for r in rows %}
-      <tr>
-        <td><strong>{{r.student.name}}</strong><div class="tiny muted">{{r.student.class_name}}{% if r.student.section %}-{{r.student.section}}{% endif %}</div></td>
-        {% for e,got,mx,pct,g in r.by_exam %}
-          <td>{{'%.1f'|format(got)}}/{{'%.0f'|format(mx)}}<div class="tiny muted">{{pct}}% • {{g}}</div></td>
-        {% endfor %}
-        <td><strong>{{r.percentage}}%</strong></td>
-        <td><span class="pill pill-blue">{{r.grade}}</span></td>
-        <td><span class="pill {{'pill-green' if r.result=='PASS' else 'pill-red'}}">{{r.result}}</span></td>
-        <td><div class="actions"><a class="btn btn-light btn-compact" target="_blank" href="{{url_for('report_card',sid=r.student.id)}}">Report PDF</a>{% if session.get("role") in ["admin","teacher"] %}<a class="btn btn-light btn-compact" href="{{url_for('report_card_config',sid=r.student.id)}}">Configure</a>{% endif %}</div></td>
-      </tr>
-    {% else %}
-      <tr><td colspan="20"><div class="empty">No result records in your current scope.</div></td></tr>
-    {% endfor %}
-    </tbody>
-  </table></div>
+  <div class="statline">
+    <div>
+      <h2>Live Results</h2>
+      <div class="small muted">
+        Teacher-saved marks become available immediately. There is no admin publishing step.
+      </div>
+    </div>
+    <span class="pill pill-green">LIVE</span>
+  </div>
+
+  <div class="table-wrap" style="margin-top:14px">
+    <table>
+      <thead>
+        <tr>
+          <th>Student</th>
+          {% for e in exams %}
+          <th>{{ e.name }}</th>
+          {% endfor %}
+          <th>Overall</th>
+          <th>Grade</th>
+          <th>Result</th>
+          <th>Report</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for r in rows %}
+        <tr>
+          <td>
+            <strong>{{ r.student.name }}</strong>
+            <div class="tiny muted">
+              Roll {{ r.student.roll_number or '—' }} ·
+              {{ r.student.class_name }}{% if r.student.section %}-{{ r.student.section }}{% endif %}
+            </div>
+          </td>
+
+          {% for e,got,mx,pct,g in r.by_exam %}
+          <td>
+            {{ '%.1f'|format(got) }}/{{ '%.0f'|format(mx) }}
+            <div class="tiny muted">{{ pct }}% • {{ g }}</div>
+          </td>
+          {% endfor %}
+
+          <td><strong>{{ r.percentage }}%</strong></td>
+          <td><span class="pill pill-blue">{{ r.grade }}</span></td>
+          <td>
+            <span class="pill {{ 'pill-green' if r.result == 'PASS' else 'pill-red' }}">
+              {{ r.result }}
+            </span>
+          </td>
+
+          <td>
+            <div class="actions">
+              <a
+                class="btn btn-light btn-compact"
+                target="_blank"
+                href="{{ url_for('report_card', sid=r.student.id) }}"
+              >
+                Report PDF
+              </a>
+
+              {% if session.get('role') in ['admin','teacher'] %}
+              <a
+                class="btn btn-light btn-compact"
+                href="{{ url_for('report_card_config', sid=r.student.id) }}"
+              >
+                Configure
+              </a>
+              {% endif %}
+            </div>
+          </td>
+        </tr>
+      {% else %}
+        <tr>
+          <td colspan="20">
+            <div class="empty">No result records in your current scope.</div>
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
 </div>
-{% if session.get('role')=='admin' %}
-<div class="card" style="margin-top:18px">
-  <div class="statline"><div><h2>Publish results</h2><div class="small muted">Students and parents can see results only after publication.</div></div><span class="pill pill-green">Admin only</span></div>
-  <form method="post" action="{{url_for('publish_results')}}" class="actions" style="margin-top:14px">
-    <input type="hidden" name="_csrf" value="{{csrf_token}}"><select name="exam_id" required>{% for e in exams if e.is_final %}<option value="{{e.id}}">{{e.name}}</option>{% endfor %}</select>
-    <input name="class_name" placeholder="Class IX" required>
-    <input name="section" placeholder="A">
-    <button class="btn btn-primary">Publish to matching students + parents</button>
-  </form>
-  <form method="post" action="{{url_for('unpublish_results')}}" class="actions" style="margin-top:8px">
-    <input type="hidden" name="_csrf" value="{{csrf_token}}"><select name="exam_id" required>{% for e in exams if e.is_final %}<option value="{{e.id}}">{{e.name}}</option>{% endfor %}</select>
-    <input name="class_name" placeholder="Class IX" required>
-    <input name="section" placeholder="A">
-    <button class="btn btn-light">Unpublish for this class</button>
-  </form>
-</div>
-{% endif %}
+
 {% endblock %}
